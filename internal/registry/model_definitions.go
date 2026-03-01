@@ -141,6 +141,9 @@ func GetGitHubCopilotModels() []*ModelInfo {
 		Copilot("grok-code-fast-1").Display("Grok Code Fast 1").Desc("xAI Grok Code Fast 1 via GitHub Copilot").Created(1763424000).B(),
 		// Microsoft models via GitHub Copilot
 		Copilot("oswe-vscode-prime").Display("Raptor mini (Preview)").Desc("Microsoft Raptor mini tuned for coding via GitHub Copilot").Created(1772352000).B(),
+		// Provider-level alias so execution paths that hand the provider the alias
+		// are still recognized by the Copilot provider registry.
+		Copilot("raptor-mini").Display("Raptor mini (alias)").Canonical("oswe-vscode-prime").Desc("Alias for oswe-vscode-prime (raptor-mini)").Created(1772352000).B(),
 	}
 }
 
