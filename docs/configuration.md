@@ -252,6 +252,14 @@ routing:
     "gpt-5":
       - "gpt-4o"
       - "gemini-2.5-pro"
+
+  # Task-oriented model profiles (request profile ID directly as model)
+  profiles:
+    chat-fast:
+      primary: "gemini-2.5-flash-lite"
+      fallbacks:
+        - "gpt-4o-mini"
+        - "claude-haiku-4.5"
 ```
 
 ### Valid Provider Names

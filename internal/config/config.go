@@ -240,15 +240,69 @@ type RoutingConfig struct {
 	hasAliases   bool
 	hasFallbacks bool
 	hasPriority  bool
+
+	// Profiles defines named task-oriented routing presets.
+	// Profiles are materialized in-memory into aliases/fallback chains at startup.
+	Profiles map[string]RoutingProfile `yaml:"profiles,omitempty" json:"profiles,omitempty"`
+}
+
+// RoutingProfile defines primary + fallback routing for a profile ID.
+type RoutingProfile struct {
+	Primary   string   `yaml:"primary" json:"primary"`
+	Fallbacks []string `yaml:"fallbacks,omitempty" json:"fallbacks,omitempty"`
 }
 
 func (r *RoutingConfig) Init() {
 	if r == nil {
 		return
 	}
+	r.materializeProfiles()
 	r.hasAliases = len(r.Aliases) > 0
 	r.hasFallbacks = len(r.Fallbacks) > 0
 	r.hasPriority = len(r.ProviderPriority) > 0
+}
+
+func (r *RoutingConfig) materializeProfiles() {
+	if r == nil || len(r.Profiles) == 0 {
+		return
+	}
+	if r.Aliases == nil {
+		r.Aliases = make(map[string]string, len(r.Profiles))
+	}
+	if r.Fallbacks == nil {
+		r.Fallbacks = make(map[string][]string, len(r.Profiles))
+	}
+
+	for profileName, profile := range r.Profiles {
+		name := strings.TrimSpace(profileName)
+		primary := strings.TrimSpace(profile.Primary)
+		if name == "" || primary == "" {
+			continue
+		}
+		if _, exists := r.Aliases[name]; exists {
+			// Explicit aliases take ownership of the key; profile materialization
+			// should not inject fallback behavior for that name.
+			continue
+		}
+		r.Aliases[name] = primary
+		if _, exists := r.Fallbacks[name]; exists {
+			continue
+		}
+		if len(profile.Fallbacks) == 0 {
+			continue
+		}
+		chain := make([]string, 0, len(profile.Fallbacks))
+		for _, fallback := range profile.Fallbacks {
+			candidate := strings.TrimSpace(fallback)
+			if candidate == "" {
+				continue
+			}
+			chain = append(chain, candidate)
+		}
+		if len(chain) > 0 {
+			r.Fallbacks[name] = chain
+		}
+	}
 }
 
 // ResolveModelAlias returns the canonical model name for the given input.
