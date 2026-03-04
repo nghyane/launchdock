@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nghyane/llm-mux/internal/api/handlers/format"
@@ -60,21 +62,89 @@ func (h *OpenAIAPIHandler) Models() []map[string]any {
 func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 	allModels := h.Models()
 
+	var processedModels []map[string]any
+
+	if h.Routing != nil && h.Routing.CanonicalModelsOnly {
+		seen := make(map[string]bool)
+		providerPrefixes := collectProviderPrefixesFromAliases(h.Routing.Aliases)
+
+		// Add canonicals from selected source
+		if h.Routing.CanonicalModelSource == "fallbacks" {
+			for k := range h.Routing.Fallbacks {
+				if !seen[k] {
+					seen[k] = true
+					processedModels = append(processedModels, map[string]any{"id": k, "object": "model", "owned_by": "canonical"})
+				}
+			}
+
+			// Also include canonical runtime model IDs already exposed by providers.
+			for _, m := range allModels {
+				id, _ := m["id"].(string)
+				if id == "" || seen[id] {
+					continue
+				}
+				if looksLikeProviderVariantModelID(id, providerPrefixes) {
+					continue
+				}
+				seen[id] = true
+				processedModels = append(processedModels, map[string]any{"id": id, "object": "model", "owned_by": "canonical"})
+			}
+		} else {
+			// default: aliases values are canonicals
+			for _, v := range h.Routing.Aliases {
+				if !seen[v] {
+					seen[v] = true
+					processedModels = append(processedModels, map[string]any{"id": v, "object": "model", "owned_by": "canonical"})
+				}
+			}
+		}
+
+		// Add explicit inclusions
+		for _, inc := range h.Routing.CanonicalModelsInclude {
+			if !seen[inc] {
+				seen[inc] = true
+				processedModels = append(processedModels, map[string]any{"id": inc, "object": "model", "owned_by": "canonical"})
+			}
+		}
+
+		// Optionally include raw provider models
+		if !h.Routing.HideProviderModels {
+			for _, m := range allModels {
+				id, _ := m["id"].(string)
+				if id != "" && !seen[id] {
+					seen[id] = true
+					processedModels = append(processedModels, m)
+				}
+			}
+		}
+	} else {
+		processedModels = allModels
+	}
+	sort.Slice(processedModels, func(i, j int) bool {
+		idI, _ := processedModels[i]["id"].(string)
+		idJ, _ := processedModels[j]["id"].(string)
+		return idI < idJ
+	})
+
 	// Filter to only include the 4 required fields: id, object, created, owned_by
-	filteredModels := make([]map[string]any, len(allModels))
-	for i, model := range allModels {
+	filteredModels := make([]map[string]any, len(processedModels))
+	for i, model := range processedModels {
 		filteredModel := map[string]any{
 			"id":     model["id"],
 			"object": model["object"],
 		}
 
-		// Add created field if it exists
 		if created, exists := model["created"]; exists {
 			filteredModel["created"] = created
 		}
 
-		// Add owned_by
-		filteredModel["owned_by"] = model["owned_by"]
+		// Add owned_by with fallback
+		if ownedBy, ok := model["owned_by"]; ok && ownedBy != "" {
+			filteredModel["owned_by"] = ownedBy
+		} else {
+			filteredModel["owned_by"] = "llm-mux"
+		}
+
 		filteredModels[i] = filteredModel
 	}
 
@@ -82,6 +152,27 @@ func (h *OpenAIAPIHandler) OpenAIModels(c *gin.Context) {
 		"object": "list",
 		"data":   filteredModels,
 	})
+}
+
+func collectProviderPrefixesFromAliases(aliases map[string]string) map[string]struct{} {
+	prefixes := make(map[string]struct{})
+	for alias := range aliases {
+		if idx := strings.IndexAny(alias, "/:"); idx > 0 {
+			prefixes[alias[:idx]] = struct{}{}
+		}
+	}
+	return prefixes
+}
+
+func looksLikeProviderVariantModelID(modelID string, providerPrefixes map[string]struct{}) bool {
+	for prefix := range providerPrefixes {
+		if strings.HasPrefix(modelID, prefix+"-") ||
+			strings.HasPrefix(modelID, prefix+"/") ||
+			strings.HasPrefix(modelID, prefix+":") {
+			return true
+		}
+	}
+	return false
 }
 
 // ChatCompletions handles the /v1/chat/completions endpoint.

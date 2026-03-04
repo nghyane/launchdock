@@ -237,6 +237,15 @@ type RoutingConfig struct {
 	// Example: "claude-opus-4-5" -> ["claude-sonnet-4-5", "gpt-4o"]
 	Fallbacks map[string][]string `yaml:"fallbacks,omitempty" json:"fallbacks,omitempty"`
 
+	// CanonicalModelsOnly feature-flags canonical-only model exposure in /v1/models
+	CanonicalModelsOnly bool `yaml:"canonical-models-only" json:"canonical-models-only"`
+	// CanonicalModelSource defines the strategy to discover canonical models ("aliases", "fallbacks")
+	CanonicalModelSource string `yaml:"canonical-model-source" json:"canonical-model-source"`
+	// CanonicalModelsInclude statically includes additional model IDs in the canonical list
+	CanonicalModelsInclude []string `yaml:"canonical-models-include" json:"canonical-models-include"`
+	// HideProviderModels removes raw provider models from the /v1/models output when true
+	HideProviderModels bool `yaml:"hide-provider-models" json:"hide-provider-models"`
+
 	hasAliases   bool
 	hasFallbacks bool
 	hasPriority  bool

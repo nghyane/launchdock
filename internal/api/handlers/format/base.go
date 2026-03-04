@@ -52,6 +52,17 @@ func (h *BaseAPIHandler) getFallbackChain(model string) []string {
 	return h.Routing.GetFallbackChain(model)
 }
 
+func (h *BaseAPIHandler) getFallbackChainWithMetadata(model string, metadata map[string]any) []string {
+	if metadata != nil {
+		if fb, ok := metadata["routing_fallback_chain"]; ok {
+			if fbChain, ok := fb.([]string); ok {
+				return fbChain
+			}
+		}
+	}
+	return h.getFallbackChain(model)
+}
+
 // Models returns all available models as maps from the global registry.
 func (h *BaseAPIHandler) Models() []map[string]any {
 	return registry.GetGlobalRegistry().GetAvailableModels("openai")
@@ -164,7 +175,7 @@ func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType
 		return resp.Payload, nil
 	}
 
-	fallbacks := h.getFallbackChain(normalizedModel)
+	fallbacks := h.getFallbackChainWithMetadata(normalizedModel, metadata)
 	for _, fallbackModel := range fallbacks {
 		fbProviders, fbNormalizedModel, fbMetadata, _ := h.getRequestDetails(fallbackModel)
 		if len(fbProviders) == 0 {
@@ -209,7 +220,7 @@ func (h *BaseAPIHandler) ExecuteStreamWithAuthManager(ctx context.Context, handl
 		return h.wrapStreamChannel(ctx, chunks)
 	}
 
-	fallbacks := h.getFallbackChain(normalizedModel)
+	fallbacks := h.getFallbackChainWithMetadata(normalizedModel, metadata)
 	for _, fallbackModel := range fallbacks {
 		fbProviders, fbNormalizedModel, fbMetadata, _ := h.getRequestDetails(fallbackModel)
 		if len(fbProviders) == 0 {
@@ -282,12 +293,31 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 	} else if specifiedProvider != "" {
 		providers = []string{specifiedProvider}
 	} else {
-		// GetProviderName uses canonical index for cross-provider routing
-		// Translation happens in executeWithProvider via GetModelIDForProvider
 		providers = util.GetProviderName(normalizedModel)
 	}
 
 	if len(providers) == 0 {
+		poolChain := h.getFallbackChain(normalizedModel)
+
+		if len(poolChain) == 0 && normalizedModel != modelName {
+			poolChain = h.getFallbackChain(modelName)
+		}
+
+		if len(poolChain) > 0 {
+			for i, poolCandidate := range poolChain {
+				cProviders := util.GetProviderName(poolCandidate)
+				if len(cProviders) > 0 {
+					if metadata == nil {
+						metadata = make(map[string]any)
+					}
+					if i+1 < len(poolChain) {
+						metadata["routing_fallback_chain"] = poolChain[i+1:]
+					}
+					return cProviders, poolCandidate, metadata, nil
+				}
+			}
+		}
+
 		return nil, "", nil, &interfaces.ErrorMessage{StatusCode: http.StatusBadRequest, Error: fmt.Errorf("unknown provider for model %s", modelName)}
 	}
 	return providers, normalizedModel, metadata, nil
