@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -68,9 +69,11 @@ func buildBetas(model string) []string {
 	// OAuth required
 	betas = append(betas, "oauth-2025-04-20")
 
-	// Long context — only if subscription supports it
-	// Claude Code uses feature flag "tengu_marble_anvil" to gate this.
-	// We skip by default; add via ANTHROPIC_BETAS env if needed.
+	// Long context (1M) — enabled when model name contains "[1m]"
+	// e.g. "claude-sonnet-4-20250514[1m]" or via LLM_MUX_ENABLE_1M=1
+	if strings.Contains(m, "[1m]") || os.Getenv("LLM_MUX_ENABLE_1M") == "1" {
+		betas = append(betas, "context-1m-2025-08-07")
+	}
 
 	// Interleaved thinking (non-haiku, non-claude-3)
 	if !isHaiku && !strings.Contains(m, "claude-3-") {

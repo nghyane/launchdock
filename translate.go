@@ -14,8 +14,12 @@ const defaultMaxTokens = 8192
 
 // ChatToClaudeRequest translates an OpenAI Chat Completions request to Claude Messages API.
 func ChatToClaudeRequest(chat *ChatRequest) (*ClaudeRequest, error) {
+	// Strip [1m] suffix from model name — it's a mux-level flag, not API model name
+	model := strings.TrimSuffix(chat.Model, "[1m]")
+	model = strings.TrimSuffix(model, "[1M]")
+
 	cr := &ClaudeRequest{
-		Model:     chat.Model,
+		Model:     model,
 		Stream:    chat.Stream,
 		MaxTokens: defaultMaxTokens,
 	}
