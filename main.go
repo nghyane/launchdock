@@ -18,6 +18,15 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
+	// Handle CLI subcommands
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "auth":
+			handleAuthCommand()
+			return
+		}
+	}
+
 	// Load credentials from all sources
 	creds := LoadAllCredentials()
 	if len(creds) == 0 {
@@ -95,6 +104,54 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+// --- CLI subcommands ---
+
+func handleAuthCommand() {
+	if len(os.Args) < 3 {
+		fmt.Fprintf(os.Stderr, "Usage:\n")
+		fmt.Fprintf(os.Stderr, "  llm-mux auth add [label]    Add a Claude account via OAuth\n")
+		fmt.Fprintf(os.Stderr, "  llm-mux auth list           List saved credentials\n")
+		os.Exit(1)
+	}
+
+	switch os.Args[2] {
+	case "add":
+		label := "Claude Account"
+		if len(os.Args) >= 4 {
+			label = os.Args[3]
+		}
+		cred, err := RunOAuthFlow(label)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Auth failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "\nAuthenticated: %s\n", cred.Label)
+		fmt.Fprintf(os.Stderr, "Token expires: %s\n", cred.ExpiresAt.Format(time.RFC3339))
+		fmt.Fprintf(os.Stderr, "Saved to: %s\n", configPath())
+
+	case "list":
+		creds := LoadAllCredentials()
+		if len(creds) == 0 {
+			fmt.Println("No credentials found.")
+			return
+		}
+		for i, c := range creds {
+			status := "ok"
+			if c.IsExpired() {
+				status = "expired"
+			}
+			if c.AuthType == AuthOAuth && c.RefreshToken != "" {
+				status += " (auto-refresh)"
+			}
+			fmt.Printf("%d. [%s] %s (%s/%s) — %s\n", i+1, status, c.Label, c.Provider, c.AuthType, c.Source)
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown auth command: %s\n", os.Args[2])
+		os.Exit(1)
+	}
 }
 
 // --- Middleware ---

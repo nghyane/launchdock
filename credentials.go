@@ -423,7 +423,11 @@ func LoadAllCredentials() []Credential {
 		}
 	}
 
-	// 3. Environment variables
+	// 3. Config file credentials (multi-account)
+	configCreds := LoadFromConfig()
+	all = append(all, configCreds...)
+
+	// 4. Environment variables
 	envSources := []struct {
 		key      string
 		provider string
