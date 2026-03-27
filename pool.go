@@ -165,7 +165,7 @@ func (p *Pool) refresh(c *Credential) error {
 
 	switch {
 	case c.Provider == "openai" && c.AuthType == AuthOAuth && c.RefreshToken != "":
-		at, rt, exp, err := RefreshOAuth(openAIOAuthEndpoint, openAIClientID, c.RefreshToken)
+		at, rt, exp, err := RefreshOpenAIOAuth(c.RefreshToken)
 		if err != nil {
 			return err
 		}
@@ -177,20 +177,32 @@ func (p *Pool) refresh(c *Credential) error {
 		slog.Info("refreshed OpenAI OAuth token", "label", c.Label, "expires", exp)
 		return nil
 
-	case c.Provider == "anthropic" && c.AuthType == AuthOAuth:
-		if err := RefreshViaCLI("claude -p . --model haiku --text hi"); err != nil {
-			return fmt.Errorf("claude CLI refresh: %w", err)
-		}
-		creds, err := LoadFromKeychain()
-		if err != nil || len(creds) == 0 {
-			return fmt.Errorf("re-read keychain after refresh: %w", err)
+	case c.Provider == "anthropic" && c.AuthType == AuthOAuth && c.RefreshToken != "":
+		at, rt, exp, err := RefreshClaudeOAuth(c.RefreshToken)
+		if err != nil {
+			// Fallback: try CLI refresh
+			slog.Warn("direct OAuth refresh failed, trying CLI fallback", "error", err)
+			if cliErr := RefreshViaCLI("claude -p . --model haiku --text hi"); cliErr != nil {
+				return fmt.Errorf("claude refresh failed (direct: %w, cli: %v)", err, cliErr)
+			}
+			creds, kerr := LoadFromKeychain()
+			if kerr != nil || len(creds) == 0 {
+				return fmt.Errorf("re-read keychain after CLI refresh: %w", kerr)
+			}
+			p.mu.Lock()
+			c.AccessToken = creds[0].AccessToken
+			c.RefreshToken = creds[0].RefreshToken
+			c.ExpiresAt = creds[0].ExpiresAt
+			p.mu.Unlock()
+			slog.Info("refreshed Claude OAuth token via CLI", "label", c.Label)
+			return nil
 		}
 		p.mu.Lock()
-		c.AccessToken = creds[0].AccessToken
-		c.RefreshToken = creds[0].RefreshToken
-		c.ExpiresAt = creds[0].ExpiresAt
+		c.AccessToken = at
+		c.RefreshToken = rt
+		c.ExpiresAt = exp
 		p.mu.Unlock()
-		slog.Info("refreshed Claude OAuth token", "label", c.Label, "expires", c.ExpiresAt)
+		slog.Info("refreshed Claude OAuth token directly", "label", c.Label, "expires", exp)
 		return nil
 
 	default:

@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -63,11 +66,10 @@ func (c *Credential) IsExpired() bool {
 // --- Load from macOS Keychain (Claude OAuth) ---
 
 func LoadFromKeychain() ([]Credential, error) {
-	// Claude Code stores OAuth tokens in macOS Keychain under service "claude.ai"
-	// Multiple accounts possible via `security find-generic-password`
-	services := []string{
-		"Claude Code-credentials",
-	}
+	// Claude Code stores OAuth tokens in macOS Keychain:
+	//   "Claude Code-credentials"          — primary account
+	//   "Claude Code-credentials-<hex>"    — additional accounts
+	services := listClaudeKeychainServices()
 
 	var creds []Credential
 	for _, service := range services {
@@ -78,7 +80,55 @@ func LoadFromKeychain() ([]Credential, error) {
 		}
 		creds = append(creds, *cred)
 	}
+
+	// Fallback: ~/.claude/.credentials.json
+	if len(creds) == 0 {
+		home, _ := os.UserHomeDir()
+		if home != "" {
+			credFile := filepath.Join(home, ".claude", ".credentials.json")
+			if data, err := os.ReadFile(credFile); err == nil {
+				if cred := parseClaudeCredentialJSON(data, "file:"+credFile); cred != nil {
+					creds = append(creds, *cred)
+				}
+			}
+		}
+	}
+
 	return creds, nil
+}
+
+// listClaudeKeychainServices scans keychain for all Claude Code credential entries.
+func listClaudeKeychainServices() []string {
+	cmd := exec.Command("security", "dump-keychain")
+	out, err := cmd.Output()
+	if err != nil {
+		return []string{"Claude Code-credentials"}
+	}
+
+	re := regexp.MustCompile(`"(Claude Code-credentials(?:-[0-9a-f]+)?)"`)
+	matches := re.FindAllStringSubmatch(string(out), -1)
+
+	seen := map[string]bool{}
+	var services []string
+
+	// Primary first
+	const primary = "Claude Code-credentials"
+	for _, m := range matches {
+		svc := m[1]
+		if !seen[svc] {
+			seen[svc] = true
+			if svc == primary {
+				services = append([]string{primary}, services...)
+			} else {
+				services = append(services, svc)
+			}
+		}
+	}
+
+	if len(services) == 0 {
+		return []string{primary}
+	}
+	return services
 }
 
 func loadKeychainEntry(service string) (*Credential, error) {
@@ -201,15 +251,69 @@ func LoadFromEnv(envKey, provider string) (*Credential, error) {
 // --- Refresh ---
 
 const (
+	// OpenAI / Codex OAuth
 	openAIOAuthEndpoint = "https://auth.openai.com/oauth/token"
 	openAIClientID      = "app_EMoamEEZ73f0CkXaXp7hrann"
+
+	// Claude OAuth (from Claude Code binary)
+	claudeOAuthEndpoint = "https://platform.claude.com/v1/oauth/token"
+	claudeClientID      = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+	claudeDefaultScopes = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 )
 
-func RefreshOAuth(endpoint, clientID, refreshToken string) (accessToken, newRefresh string, expiresAt time.Time, err error) {
-	resp, err := http.PostForm(endpoint, url.Values{
+// RefreshClaudeOAuth refreshes a Claude OAuth token using the discovered endpoint.
+// Claude uses JSON body (not form-encoded) and requires a scope field.
+func RefreshClaudeOAuth(refreshToken string) (accessToken, newRefresh string, expiresAt time.Time, err error) {
+	body := map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+		"client_id":     claudeClientID,
+		"scope":         claudeDefaultScopes,
+	}
+	bodyBytes, _ := json.Marshal(body)
+
+	req, err := http.NewRequest("POST", claudeOAuthEndpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", "", time.Time{}, fmt.Errorf("build refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", time.Time{}, fmt.Errorf("refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", "", time.Time{}, fmt.Errorf("refresh failed: status %d body=%s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", "", time.Time{}, fmt.Errorf("parse refresh response: %w", err)
+	}
+
+	exp := time.Now().Add(time.Duration(result.ExpiresIn) * time.Second)
+	nr := result.RefreshToken
+	if nr == "" {
+		nr = refreshToken
+	}
+	return result.AccessToken, nr, exp, nil
+}
+
+// RefreshOpenAIOAuth refreshes an OpenAI/Codex OAuth token (form-encoded).
+func RefreshOpenAIOAuth(refreshToken string) (accessToken, newRefresh string, expiresAt time.Time, err error) {
+	resp, err := http.PostForm(openAIOAuthEndpoint, url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
-		"client_id":     {clientID},
+		"client_id":     {openAIClientID},
 	})
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("refresh request: %w", err)
@@ -217,14 +321,14 @@ func RefreshOAuth(endpoint, clientID, refreshToken string) (accessToken, newRefr
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return "", "", time.Time{}, fmt.Errorf("refresh failed: status %d", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", "", time.Time{}, fmt.Errorf("refresh failed: status %d body=%s", resp.StatusCode, string(respBody))
 	}
 
 	var result struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
-		IDToken      string `json:"id_token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", "", time.Time{}, fmt.Errorf("parse refresh response: %w", err)
@@ -247,6 +351,37 @@ func RefreshViaCLI(command string) error {
 }
 
 // --- Helpers ---
+
+// parseClaudeCredentialJSON parses a ~/.claude/.credentials.json file.
+func parseClaudeCredentialJSON(data []byte, source string) *Credential {
+	var wrapper struct {
+		ClaudeAiOauth *struct {
+			AccessToken  string      `json:"accessToken"`
+			RefreshToken string      `json:"refreshToken"`
+			ExpiresAt    json.Number `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &wrapper); err != nil || wrapper.ClaudeAiOauth == nil {
+		return nil
+	}
+	oauth := wrapper.ClaudeAiOauth
+	if oauth.AccessToken == "" {
+		return nil
+	}
+	var expiresAt time.Time
+	if ms, err := strconv.ParseInt(oauth.ExpiresAt.String(), 10, 64); err == nil {
+		expiresAt = time.UnixMilli(ms)
+	}
+	return &Credential{
+		Provider:     "anthropic",
+		AuthType:     AuthOAuth,
+		Label:        "Claude Credentials File",
+		Source:       source,
+		AccessToken:  oauth.AccessToken,
+		RefreshToken: oauth.RefreshToken,
+		ExpiresAt:    expiresAt,
+	}
+}
 
 func extractJWTExpiry(token string) time.Time {
 	parts := strings.Split(token, ".")
