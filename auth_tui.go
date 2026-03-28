@@ -181,6 +181,9 @@ func authStatusColor(v CredentialView) string {
 }
 
 func authRowSummary(v CredentialView) string {
+	if authStatusLabel(v) == "relogin" {
+		return "login again or remove this account"
+	}
 	if v.Managed {
 		return "managed by launchdock"
 	}

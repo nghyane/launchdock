@@ -20,8 +20,8 @@ type ChatRequest struct {
 }
 
 type ChatMessage struct {
-	Role       string         `json:"role"`
-	Content    any            `json:"content"` // string or []ChatContentPart
+	Role       string         `json:"role,omitempty"`
+	Content    any            `json:"content,omitempty"` // string or []ChatContentPart
 	Name       *string        `json:"name,omitempty"`
 	ToolCalls  []ChatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
@@ -57,8 +57,8 @@ type ChatToolCall struct {
 }
 
 type ChatFunctionCall struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 // --- Response types ---

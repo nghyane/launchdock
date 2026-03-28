@@ -249,7 +249,7 @@ func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Cr
 				}
 
 			case "input_json_delta":
-				if currentToolCall != nil {
+				if currentToolCall != nil && cbd.Delta.PartialJSON != "" {
 					// Only send arguments delta — no empty id/type/name fields
 					chunk := ChatStreamChunk{
 						ID: chatID, Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: model,

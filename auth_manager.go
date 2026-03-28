@@ -171,7 +171,7 @@ func managedCredentialView(cc ConfigCredential) CredentialView {
 	}
 	if err != nil {
 		v.Status = "stale"
-		v.StatusMessage = err.Error()
+		v.StatusMessage = "login again or remove this account"
 		return v
 	}
 	v.Status = "healthy"
