@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 )
 
@@ -69,19 +68,10 @@ func buildBetas(model string) []string {
 	// OAuth required
 	betas = append(betas, "oauth-2025-04-20")
 
-	// Long context (1M) — enabled when model name contains "[1m]"
-	// e.g. "claude-sonnet-4-20250514[1m]" or via LLM_MUX_ENABLE_1M=1
-	if strings.Contains(m, "[1m]") || os.Getenv("LLM_MUX_ENABLE_1M") == "1" {
-		betas = append(betas, "context-1m-2025-08-07")
-	}
-
 	// Interleaved thinking (non-haiku, non-claude-3)
 	if !isHaiku && !strings.Contains(m, "claude-3-") {
 		betas = append(betas, "interleaved-thinking-2025-05-14")
 	}
-
-	// Context management
-	betas = append(betas, "context-management-2025-06-27")
 
 	// Prompt caching
 	betas = append(betas, "prompt-caching-scope-2026-01-05")
