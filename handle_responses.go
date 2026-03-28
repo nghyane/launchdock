@@ -55,50 +55,40 @@ func HandleResponses(pool *Pool, openai *OpenAIProvider) http.HandlerFunc {
 			body = ensureResponsesInstructions(body)
 		}
 
-		// Forward to OpenAI Responses API
-		// Codex OAuth uses chatgpt.com/backend-api/codex/responses
-		// API key uses api.openai.com/v1/responses
-		var upstreamURL string
-		if cred.AuthType == AuthOAuth {
-			upstreamURL = openai.ChatGPTBaseURL() + "/responses"
-		} else {
-			upstreamURL = openai.BaseURL() + "/v1/responses"
-		}
-		upReq, err := http.NewRequestWithContext(r.Context(), "POST",
-			upstreamURL, bytes.NewReader(body))
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, "build request: "+err.Error())
-			return
-		}
-
-		// Auth headers
-		openai.Prepare(upReq, cred)
-
-		// Forward Codex-specific headers from original request
-		for _, h := range []string{
-			"x-codex-turn-state",
-			"x-codex-turn-metadata",
-			"x-codex-beta-features",
-			"x-client-request-id",
-			"OpenAI-Beta",
-		} {
-			if v := r.Header.Get(h); v != "" {
-				upReq.Header.Set(h, v)
+		upResp, cred, err := ensureOKOrRetry(pool, "openai", cred, func(current *Credential) (*http.Response, error) {
+			var upstreamURL string
+			if current.AuthType == AuthOAuth {
+				upstreamURL = openai.ChatGPTBaseURL() + "/responses"
+			} else {
+				upstreamURL = openai.BaseURL() + "/v1/responses"
 			}
-		}
+			upReq, err := http.NewRequestWithContext(r.Context(), "POST",
+				upstreamURL, bytes.NewReader(body))
+			if err != nil {
+				return nil, err
+			}
 
-		upResp, err := StreamClient.Do(upReq)
+			openai.Prepare(upReq, current)
+
+			for _, h := range []string{
+				"x-codex-turn-state",
+				"x-codex-turn-metadata",
+				"x-codex-beta-features",
+				"x-client-request-id",
+				"OpenAI-Beta",
+			} {
+				if v := r.Header.Get(h); v != "" {
+					upReq.Header.Set(h, v)
+				}
+			}
+
+			return StreamClient.Do(upReq)
+		})
 		if err != nil {
 			httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
 			return
 		}
 		defer upResp.Body.Close()
-
-		// Handle errors
-		if upResp.StatusCode != http.StatusOK {
-			handleUpstreamError(w, upResp, pool, cred)
-			return
-		}
 
 		if peek.Stream {
 			relayResponsesStream(w, upResp)

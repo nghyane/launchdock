@@ -26,10 +26,12 @@ const (
 )
 
 type Credential struct {
+	ID       string
 	Provider string // "anthropic" | "openai"
 	AuthType AuthType
 	Label    string
 	Source   string // "keychain:claude-code" | "file:~/.codex/auth.json" | "env:ANTHROPIC_API_KEY"
+	Managed  bool
 
 	// OAuth fields
 	AccessToken  string

@@ -390,6 +390,23 @@ func toggleConfigCredentialDisabled(id string) error {
 	return fmt.Errorf("credential not found")
 }
 
+func persistManagedCredentialState(id, refreshToken, accountID string) error {
+	cfg := loadConfig()
+	for i := range cfg.Credentials {
+		if cfg.Credentials[i].ID != id {
+			continue
+		}
+		if refreshToken != "" {
+			cfg.Credentials[i].RefreshToken = refreshToken
+		}
+		if accountID != "" {
+			cfg.Credentials[i].AccountID = accountID
+		}
+		return saveConfig(cfg)
+	}
+	return fmt.Errorf("managed credential not found")
+}
+
 // LoadFromConfig loads credentials from ~/.config/launchdock/config.json
 func LoadFromConfig() []Credential {
 	cfg := loadConfig()
@@ -400,10 +417,12 @@ func LoadFromConfig() []Credential {
 		}
 		if cc.APIKey != "" {
 			creds = append(creds, Credential{
+				ID:       cc.ID,
 				Provider: cc.Provider,
 				AuthType: AuthAPIKey,
 				Label:    cc.Label,
 				Source:   "config:" + configPath(),
+				Managed:  true,
 				APIKey:   cc.APIKey,
 			})
 		} else if cc.RefreshToken != "" {
@@ -422,19 +441,23 @@ func LoadFromConfig() []Credential {
 				slog.Warn("config credential refresh failed", "label", cc.Label, "error", err)
 				// Store with refresh token anyway — will retry later
 				creds = append(creds, Credential{
+					ID:           cc.ID,
 					Provider:     cc.Provider,
 					AuthType:     AuthOAuth,
 					Label:        cc.Label,
 					Source:       "config:" + configPath(),
+					Managed:      true,
 					RefreshToken: cc.RefreshToken,
 					AccountID:    cc.AccountID,
 				})
 			} else {
 				creds = append(creds, Credential{
+					ID:           cc.ID,
 					Provider:     cc.Provider,
 					AuthType:     AuthOAuth,
 					Label:        cc.Label,
 					Source:       "config:" + configPath(),
+					Managed:      true,
 					AccessToken:  at,
 					RefreshToken: rt,
 					AccountID:    cc.AccountID,

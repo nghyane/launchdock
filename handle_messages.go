@@ -56,28 +56,20 @@ func HandleMessages(pool *Pool, anthropic *AnthropicProvider) http.HandlerFunc {
 			body, _ = ensureOAuthRequirements(body)
 		}
 
-		// Forward to Anthropic
-		upReq, err := http.NewRequestWithContext(r.Context(), "POST",
-			anthropic.BaseURL()+"/v1/messages", bytes.NewReader(body))
-		if err != nil {
-			httpError(w, http.StatusInternalServerError, "build request: "+err.Error())
-			return
-		}
-
-		anthropic.PrepareWithModel(upReq, cred, peek.Model)
-
-		upResp, err := StreamClient.Do(upReq)
+		upResp, cred, err := ensureOKOrRetry(pool, "anthropic", cred, func(current *Credential) (*http.Response, error) {
+			upReq, err := http.NewRequestWithContext(r.Context(), "POST",
+				anthropic.BaseURL()+"/v1/messages", bytes.NewReader(body))
+			if err != nil {
+				return nil, err
+			}
+			anthropic.PrepareWithModel(upReq, current, peek.Model)
+			return StreamClient.Do(upReq)
+		})
 		if err != nil {
 			httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
 			return
 		}
 		defer upResp.Body.Close()
-
-		// Handle errors
-		if upResp.StatusCode != http.StatusOK {
-			handleUpstreamError(w, upResp, pool, cred)
-			return
-		}
 
 		if peek.Stream {
 			relayClaudeMessagesStream(w, upResp, cred)

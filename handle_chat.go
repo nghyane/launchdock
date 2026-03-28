@@ -102,61 +102,25 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 
 // sendWithRetry sends the upstream request, retrying with a different credential on retryable errors.
 func sendWithRetry(r *http.Request, provider Provider, pool *Pool, cred *Credential, model string, body []byte, urlPath string) (*http.Response, *Credential, error) {
-	maxRetries := 2
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
+	return doWithCredentialRetry(pool, provider.ProviderName(), cred, func(current *Credential) (*http.Response, error) {
 		upReq, err := http.NewRequestWithContext(r.Context(), "POST",
 			provider.BaseURL()+urlPath, bytes.NewReader(body))
 		if err != nil {
-			return nil, cred, err
+			return nil, err
 		}
 
 		if ap, ok := provider.(*AnthropicProvider); ok {
-			ap.PrepareWithModel(upReq, cred, model)
+			ap.PrepareWithModel(upReq, current, model)
 		} else {
-			provider.Prepare(upReq, cred)
+			provider.Prepare(upReq, current)
 		}
 
 		resp, err := StreamClient.Do(upReq)
 		if err != nil {
-			return nil, cred, err
+			return nil, err
 		}
-
-		if resp.StatusCode == http.StatusOK || !isRetryable(resp.StatusCode) || attempt == maxRetries {
-			return resp, cred, nil
-		}
-
-		// Retryable error — cooldown current credential, try next
-		errBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		slog.Warn("retryable upstream error, trying next credential",
-			"status", resp.StatusCode,
-			"credential", cred.Label,
-			"attempt", attempt+1,
-			"body", string(errBody),
-		)
-
-		switch resp.StatusCode {
-		case 429:
-			pool.Cooldown(cred, 60*time.Second)
-		case 529, 503:
-			pool.Cooldown(cred, 30*time.Second)
-		}
-
-		nextCred, err := pool.PickNext(provider.ProviderName(), cred)
-		if err != nil {
-			// No more credentials — return the error response
-			return &http.Response{
-				StatusCode: resp.StatusCode,
-				Body:       io.NopCloser(bytes.NewReader(errBody)),
-				Header:     resp.Header,
-			}, cred, nil
-		}
-		cred = nextCred
-		slog.Info("retrying with credential", "label", cred.Label, "attempt", attempt+2)
-	}
-
-	return nil, cred, fmt.Errorf("max retries exceeded")
+		return resp, nil
+	})
 }
 
 func handleStreamResponse(w http.ResponseWriter, upResp *http.Response, provider Provider, cred *Credential, model string) {

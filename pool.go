@@ -9,129 +9,55 @@ import (
 
 // Pool manages credentials with round-robin selection and cooldown.
 type Pool struct {
-	mu         sync.Mutex
-	creds      []Credential
-	cursor     int
-	refreshMu  sync.Mutex // separate lock for refresh operations
-	refreshing map[string]bool
+	mu           sync.Mutex
+	creds        []Credential
+	cursor       int
+	refreshMu    sync.Mutex
+	refreshLocks map[string]*sync.Mutex
 }
 
 func NewPool(creds []Credential) *Pool {
-	p := &Pool{
-		creds:      creds,
-		refreshing: make(map[string]bool),
-	}
-	go p.backgroundRefreshLoop()
-	return p
-}
-
-// backgroundRefreshLoop pre-refreshes tokens 5 minutes before expiry.
-func (p *Pool) backgroundRefreshLoop() {
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		p.mu.Lock()
-		var needsRefresh []*Credential
-		for i := range p.creds {
-			c := &p.creds[i]
-			if c.AuthType != AuthOAuth || c.RefreshToken == "" {
-				continue
-			}
-			if c.ExpiresAt.IsZero() {
-				continue
-			}
-			// Refresh 5 minutes before expiry
-			if time.Until(c.ExpiresAt) < 5*time.Minute {
-				needsRefresh = append(needsRefresh, c)
-			}
-		}
-		p.mu.Unlock()
-
-		for _, c := range needsRefresh {
-			slog.Info("pre-refreshing token", "label", c.Label, "expires_in", time.Until(c.ExpiresAt))
-			if err := p.refresh(c); err != nil {
-				slog.Warn("background refresh failed", "label", c.Label, "error", err)
-			}
-		}
-	}
+	return &Pool{creds: creds, refreshLocks: make(map[string]*sync.Mutex)}
 }
 
 // Pick selects the next available credential for the given provider.
 // Skips credentials that are cooled down or expired (and can't refresh).
 func (p *Pool) Pick(provider string) (*Credential, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	n := len(p.creds)
 	if n == 0 {
 		return nil, fmt.Errorf("no credentials available")
 	}
-
-	now := time.Now()
-	start := p.cursor
-	var needsRefresh *Credential
-
-	for i := 0; i < n; i++ {
-		idx := (start + i) % n
+	for _, idx := range p.pickCandidateIndices(provider, nil) {
 		c := &p.creds[idx]
-
-		if c.Provider != provider {
-			continue
-		}
-		if now.Before(c.CooldownUntil) {
-			slog.Debug("credential on cooldown", "label", c.Label, "until", c.CooldownUntil)
-			continue
-		}
-
-		if c.IsExpired() {
-			// Remember first expired cred, try to find a non-expired one first
-			if needsRefresh == nil {
-				needsRefresh = c
+		if p.needsRefresh(c) {
+			if err := p.refresh(c); err != nil {
+				slog.Warn("credential refresh failed", "label", c.Label, "error", err)
+				continue
 			}
-			continue
 		}
-
+		p.mu.Lock()
 		p.cursor = (idx + 1) % n
+		p.mu.Unlock()
 		return c, nil
 	}
-
-	// All matching creds expired — try refresh outside lock
-	if needsRefresh != nil {
-		p.mu.Unlock()
-		err := p.refresh(needsRefresh)
-		p.mu.Lock()
-		if err == nil && !needsRefresh.IsExpired() {
-			return needsRefresh, nil
-		}
-		slog.Warn("credential refresh failed", "label", needsRefresh.Label, "error", err)
-	}
-
 	return nil, fmt.Errorf("no available credential for provider %q", provider)
 }
 
 // PickNext selects the next credential after a failed attempt (for retry).
 func (p *Pool) PickNext(provider string, exclude *Credential) (*Credential, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	n := len(p.creds)
-	now := time.Now()
-
-	for i := 0; i < n; i++ {
-		idx := (p.cursor + i) % n
+	for _, idx := range p.pickCandidateIndices(provider, exclude) {
 		c := &p.creds[idx]
-
-		if c.Provider != provider || c == exclude {
-			continue
+		if p.needsRefresh(c) {
+			if err := p.refresh(c); err != nil {
+				slog.Warn("fallback credential refresh failed", "label", c.Label, "error", err)
+				continue
+			}
 		}
-		if now.Before(c.CooldownUntil) || c.IsExpired() {
-			continue
-		}
-
-		p.cursor = (idx + 1) % n
+		p.mu.Lock()
+		p.cursor = (idx + 1) % len(p.creds)
+		p.mu.Unlock()
 		return c, nil
 	}
-
 	return nil, fmt.Errorf("no fallback credential for provider %q", provider)
 }
 
@@ -174,32 +100,79 @@ func (p *Pool) Providers() []string {
 	return result
 }
 
+func (p *Pool) pickCandidateIndices(provider string, exclude *Credential) []int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := len(p.creds)
+	now := time.Now()
+	start := p.cursor
+	var result []int
+	for i := 0; i < n; i++ {
+		idx := (start + i) % n
+		c := &p.creds[idx]
+		if c.Provider != provider || c == exclude {
+			continue
+		}
+		if now.Before(c.CooldownUntil) {
+			slog.Debug("credential on cooldown", "label", c.Label, "until", c.CooldownUntil)
+			continue
+		}
+		result = append(result, idx)
+	}
+	return result
+}
+
+func (p *Pool) needsRefresh(c *Credential) bool {
+	if c.AuthType != AuthOAuth || c.RefreshToken == "" || c.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Until(c.ExpiresAt) <= 5*time.Minute
+}
+
+func (p *Pool) lockForCredential(c *Credential) *sync.Mutex {
+	key := c.Provider + ":" + c.Source + ":" + c.Label
+	if c.ID != "" {
+		key = c.ID
+	}
+	p.refreshMu.Lock()
+	defer p.refreshMu.Unlock()
+	if lock, ok := p.refreshLocks[key]; ok {
+		return lock
+	}
+	lock := &sync.Mutex{}
+	p.refreshLocks[key] = lock
+	return lock
+}
+
 // refresh runs outside the main pool lock to avoid blocking all requests.
 func (p *Pool) refresh(c *Credential) error {
-	// Prevent concurrent refreshes for the same credential
-	p.refreshMu.Lock()
-	if p.refreshing[c.Label] {
-		p.refreshMu.Unlock()
-		// Another goroutine is refreshing — wait briefly then check
-		time.Sleep(2 * time.Second)
-		if !c.IsExpired() {
-			return nil // other refresh succeeded
-		}
-		return fmt.Errorf("concurrent refresh in progress for %s", c.Label)
-	}
-	p.refreshing[c.Label] = true
-	p.refreshMu.Unlock()
+	lock := p.lockForCredential(c)
+	lock.Lock()
+	defer lock.Unlock()
 
-	defer func() {
-		p.refreshMu.Lock()
-		delete(p.refreshing, c.Label)
-		p.refreshMu.Unlock()
-	}()
+	p.mu.Lock()
+	if time.Now().Before(c.CooldownUntil) {
+		until := c.CooldownUntil
+		p.mu.Unlock()
+		return fmt.Errorf("credential on cooldown until %s", until.Format(time.RFC3339))
+	}
+	if !p.needsRefresh(c) {
+		p.mu.Unlock()
+		return nil
+	}
+	provider := c.Provider
+	authType := c.AuthType
+	refreshToken := c.RefreshToken
+	label := c.Label
+	managedID := c.ID
+	managed := c.Managed
+	p.mu.Unlock()
 
 	switch {
-	case c.Provider == "openai" && c.AuthType == AuthOAuth && c.RefreshToken != "":
-		at, rt, exp, err := RefreshOpenAIOAuth(c.RefreshToken)
+	case provider == "openai" && authType == AuthOAuth && refreshToken != "":
+		at, rt, exp, err := RefreshOpenAIOAuth(refreshToken)
 		if err != nil {
+			p.Cooldown(c, 45*time.Second)
 			return err
 		}
 		p.mu.Lock()
@@ -207,12 +180,18 @@ func (p *Pool) refresh(c *Credential) error {
 		c.RefreshToken = rt
 		c.ExpiresAt = exp
 		p.mu.Unlock()
-		slog.Info("refreshed OpenAI OAuth token", "label", c.Label, "expires", exp)
+		if managed && managedID != "" {
+			if err := persistManagedCredentialState(managedID, rt, c.AccountID); err != nil {
+				slog.Warn("persist managed OpenAI token failed", "label", label, "error", err)
+			}
+		}
+		slog.Info("refreshed OpenAI OAuth token", "label", label, "expires", exp)
 		return nil
 
-	case c.Provider == "anthropic" && c.AuthType == AuthOAuth && c.RefreshToken != "":
-		at, rt, exp, err := RefreshClaudeOAuth(c.RefreshToken)
+	case provider == "anthropic" && authType == AuthOAuth && refreshToken != "":
+		at, rt, exp, err := RefreshClaudeOAuth(refreshToken)
 		if err != nil {
+			p.Cooldown(c, 45*time.Second)
 			// Fallback: try CLI refresh
 			slog.Warn("direct OAuth refresh failed, trying CLI fallback", "error", err)
 			if cliErr := RefreshViaCLI("claude -p . --model haiku --text hi"); cliErr != nil {
@@ -227,7 +206,12 @@ func (p *Pool) refresh(c *Credential) error {
 			c.RefreshToken = creds[0].RefreshToken
 			c.ExpiresAt = creds[0].ExpiresAt
 			p.mu.Unlock()
-			slog.Info("refreshed Claude OAuth token via CLI", "label", c.Label)
+			if managed && managedID != "" {
+				if err := persistManagedCredentialState(managedID, creds[0].RefreshToken, c.AccountID); err != nil {
+					slog.Warn("persist managed Claude token failed", "label", label, "error", err)
+				}
+			}
+			slog.Info("refreshed Claude OAuth token via CLI", "label", label)
 			return nil
 		}
 		p.mu.Lock()
@@ -235,7 +219,12 @@ func (p *Pool) refresh(c *Credential) error {
 		c.RefreshToken = rt
 		c.ExpiresAt = exp
 		p.mu.Unlock()
-		slog.Info("refreshed Claude OAuth token directly", "label", c.Label, "expires", exp)
+		if managed && managedID != "" {
+			if err := persistManagedCredentialState(managedID, rt, c.AccountID); err != nil {
+				slog.Warn("persist managed Claude token failed", "label", label, "error", err)
+			}
+		}
+		slog.Info("refreshed Claude OAuth token directly", "label", label, "expires", exp)
 		return nil
 
 	default:
