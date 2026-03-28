@@ -1,4 +1,4 @@
-package launchdock
+package httpapi
 
 import (
 	"bytes"

@@ -1,4 +1,4 @@
-package launchdock
+package httpapi
 
 import (
 	"bytes"
@@ -9,10 +9,14 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	protocol "github.com/nghiahoang/launchdock/internal/protocol"
+	providerspkg "github.com/nghiahoang/launchdock/internal/providers"
 )
 
 // HandleChatCompletions handles POST /v1/chat/completions
-func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
+func HandleChatCompletions(pool *providerspkg.Pool, providers []providerspkg.Provider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			httpError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -26,7 +30,7 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 			return
 		}
 
-		var chatReq ChatRequest
+		var chatReq protocol.ChatRequest
 		if err := json.Unmarshal(body, &chatReq); err != nil {
 			httpError(w, http.StatusBadRequest, "parse request: "+err.Error())
 			return
@@ -38,7 +42,7 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 		}
 
 		// Route to provider
-		provider := RouteProvider(providers, chatReq.Model)
+		provider := providerspkg.RouteProvider(providers, chatReq.Model)
 		if provider == nil {
 			httpError(w, http.StatusBadRequest, fmt.Sprintf("no provider for model %q", chatReq.Model))
 			return
@@ -59,8 +63,8 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 		)
 
 		// OpenAI OAuth (Codex) → route through Responses API with translation
-		if _, ok := provider.(*OpenAIProvider); ok && cred.AuthType == AuthOAuth {
-			handleChatViaResponsesAPI(w, r, &chatReq, body, provider.(*OpenAIProvider), pool, cred)
+		if _, ok := provider.(*providerspkg.OpenAIProvider); ok && cred.AuthType == authpkg.AuthOAuth {
+			handleChatViaResponsesAPI(w, r, &chatReq, body, provider.(*providerspkg.OpenAIProvider), pool, cred)
 			return
 		}
 
@@ -72,9 +76,9 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 		}
 
 		// Apply OAuth quirks for Anthropic
-		if _, ok := provider.(*AnthropicProvider); ok && cred.AuthType == AuthOAuth {
-			upstreamBody, _ = PrefixTools(upstreamBody, "mcp_")
-			upstreamBody, _ = EnsureOAuthRequirements(upstreamBody)
+		if _, ok := provider.(*providerspkg.AnthropicProvider); ok && cred.AuthType == authpkg.AuthOAuth {
+			upstreamBody, _ = providerspkg.PrefixTools(upstreamBody, "mcp_")
+			upstreamBody, _ = providerspkg.EnsureOAuthRequirements(upstreamBody)
 		}
 
 		// Send with retry on retryable errors

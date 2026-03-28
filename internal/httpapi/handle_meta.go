@@ -1,4 +1,4 @@
-package launchdock
+package httpapi
 
 import (
 	"encoding/json"
@@ -81,6 +81,10 @@ func fetchAllModels(pool *Pool, anthropic *AnthropicProvider) []map[string]any {
 	}
 
 	return models
+}
+
+func FetchAllModels(pool *Pool, anthropic *AnthropicProvider) []map[string]any {
+	return fetchAllModels(pool, anthropic)
 }
 
 func fetchAnthropicModels(pool *Pool, provider *AnthropicProvider) []map[string]any {
