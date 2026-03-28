@@ -1,4 +1,4 @@
-package launchdock
+package runtime
 
 import (
 	"fmt"
@@ -67,20 +67,20 @@ func processAlive(pid int) bool {
 	return signalProcess0(proc) == nil
 }
 
-func ensureServerRunning(cfg LaunchConfig) error {
-	if isServerHealthy(cfg.RawURL) {
+func EnsureServerRunning(rawURL string) error {
+	if isServerHealthy(rawURL) {
 		return nil
 	}
 	if pid, err := readDaemonPID(); err == nil {
 		if processAlive(pid) {
-			return waitForHealthy(cfg.RawURL, 5*time.Second)
+			return waitForHealthy(rawURL, 5*time.Second)
 		}
 		removeDaemonPID()
 	}
 	if err := startBackgroundServer(); err != nil {
 		return err
 	}
-	return waitForHealthy(cfg.RawURL, 10*time.Second)
+	return waitForHealthy(rawURL, 10*time.Second)
 }
 
 func waitForHealthy(rawURL string, timeout time.Duration) error {
@@ -94,7 +94,7 @@ func waitForHealthy(rawURL string, timeout time.Duration) error {
 	return fmt.Errorf("server did not become healthy at %s", rawURL)
 }
 
-func stopServer() error {
+func StopServer() error {
 	pid, err := readDaemonPID()
 	if err != nil {
 		return fmt.Errorf("no running daemon")
@@ -119,7 +119,7 @@ func stopServer() error {
 	return fmt.Errorf("process %d did not stop", pid)
 }
 
-func daemonStatus(rawURL string) (string, int) {
+func DaemonStatus(rawURL string) (string, int) {
 	pid, err := readDaemonPID()
 	if err != nil {
 		if isServerHealthy(rawURL) {
@@ -140,64 +140,4 @@ func daemonStatus(rawURL string) (string, int) {
 	return "starting", pid
 }
 
-func handlePSCommand() {
-	cfg := resolveLaunchConfig()
-	status, pid := daemonStatus(cfg.RawURL)
-	fmt.Print("launchdock ps\n\n")
-	fmt.Printf("status: %s\n", status)
-	if pid > 0 {
-		fmt.Printf("pid:    %d\n", pid)
-	}
-	fmt.Printf("url:    %s\n", cfg.RawURL)
-	fmt.Printf("log:    %s\n\n", daemonLogPath())
-}
-
-func handleStopCommand() {
-	if err := stopServer(); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("✓ launchdock stopped")
-}
-
-func handleRestartCommand() {
-	cfg := resolveLaunchConfig()
-	_ = stopServer()
-	if err := startBackgroundServer(); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
-		os.Exit(1)
-	}
-	if err := waitForHealthy(cfg.RawURL, 10*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("✓ launchdock restarted at %s\n", cfg.RawURL)
-}
-
-func handleStartCommand() {
-	cfg := resolveLaunchConfig()
-	if err := ensureServerRunning(cfg); err != nil {
-		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
-		os.Exit(1)
-	}
-	status, pid := daemonStatus(cfg.RawURL)
-	if pid > 0 {
-		fmt.Printf("✓ launchdock %s at %s (pid %d)\n", status, cfg.RawURL, pid)
-		return
-	}
-	fmt.Printf("✓ launchdock %s at %s\n", status, cfg.RawURL)
-}
-
-func handleLogsCommand() {
-	path := daemonLogPath()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "✗ no log file at %s\n", path)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "✗ read log failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Print(string(data))
-}
+func DaemonLogPath() string { return daemonLogPath() }

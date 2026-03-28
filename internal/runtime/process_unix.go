@@ -1,6 +1,6 @@
 //go:build darwin || linux
 
-package launchdock
+package runtime
 
 import (
 	"os"

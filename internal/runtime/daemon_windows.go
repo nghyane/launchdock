@@ -1,6 +1,6 @@
-//go:build darwin || linux
+//go:build windows
 
-package launchdock
+package runtime
 
 import (
 	"os"
@@ -24,8 +24,7 @@ func startBackgroundServer() error {
 	cmd.Env = os.Environ()
 	cmd.Stdout = logf
 	cmd.Stderr = logf
-	cmd.Stdin = nil
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008}
 	if err := cmd.Start(); err != nil {
 		_ = logf.Close()
 		return err

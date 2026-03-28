@@ -1,6 +1,6 @@
 //go:build windows
 
-package launchdock
+package runtime
 
 import (
 	"os"
