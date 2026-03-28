@@ -53,7 +53,7 @@ jobs:
           fi
           bin="launchdock${ext}"
           version="${{ github.event.release.tag_name || github.ref_name }}"
-          go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "dist/${bin}" .
+          go build -trimpath -ldflags="-s -w -X github.com/nghiahoang/launchdock.version=${version}" -o "dist/${bin}" ./cmd/launchdock
 
       - name: Package archive
         run: |

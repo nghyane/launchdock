@@ -1,4 +1,4 @@
-package main
+package launchdock
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 
 var version = "dev"
 
-func main() {
+func Run() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	if len(os.Args) >= 2 {
