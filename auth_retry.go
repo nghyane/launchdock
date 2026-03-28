@@ -88,7 +88,7 @@ func doWithCredentialRetry(pool *Pool, providerName string, cred *Credential, at
 		if isAuthFailure(providerName, resp.StatusCode, errBody) {
 			if !refreshedSame && cred.AuthType == AuthOAuth && cred.RefreshToken != "" {
 				refreshedSame = true
-				if err := pool.refresh(cred); err == nil {
+				if err := pool.RefreshCredential(cred); err == nil {
 					slog.Warn("auth failure recovered by refresh", "provider", providerName, "credential", cred.Label)
 					continue
 				}

@@ -1,28 +1,30 @@
-package launchdock
+package providers
 
 import (
 	"fmt"
 	"log/slog"
 	"sync"
 	"time"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
 )
 
 // Pool manages credentials with round-robin selection and cooldown.
 type Pool struct {
 	mu           sync.Mutex
-	creds        []Credential
+	creds        []authpkg.Credential
 	cursor       int
 	refreshMu    sync.Mutex
 	refreshLocks map[string]*sync.Mutex
 }
 
-func NewPool(creds []Credential) *Pool {
+func NewPool(creds []authpkg.Credential) *Pool {
 	return &Pool{creds: creds, refreshLocks: make(map[string]*sync.Mutex)}
 }
 
 // Pick selects the next available credential for the given provider.
 // Skips credentials that are cooled down or expired (and can't refresh).
-func (p *Pool) Pick(provider string) (*Credential, error) {
+func (p *Pool) Pick(provider string) (*authpkg.Credential, error) {
 	n := len(p.creds)
 	if n == 0 {
 		return nil, fmt.Errorf("no credentials available")
@@ -44,7 +46,7 @@ func (p *Pool) Pick(provider string) (*Credential, error) {
 }
 
 // PickNext selects the next credential after a failed attempt (for retry).
-func (p *Pool) PickNext(provider string, exclude *Credential) (*Credential, error) {
+func (p *Pool) PickNext(provider string, exclude *authpkg.Credential) (*authpkg.Credential, error) {
 	for _, idx := range p.pickCandidateIndices(provider, exclude) {
 		c := &p.creds[idx]
 		if p.needsRefresh(c) {
@@ -62,7 +64,7 @@ func (p *Pool) PickNext(provider string, exclude *Credential) (*Credential, erro
 }
 
 // Cooldown marks a credential as temporarily unavailable.
-func (p *Pool) Cooldown(c *Credential, d time.Duration) {
+func (p *Pool) Cooldown(c *authpkg.Credential, d time.Duration) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	c.CooldownUntil = time.Now().Add(d)
@@ -100,7 +102,7 @@ func (p *Pool) Providers() []string {
 	return result
 }
 
-func (p *Pool) pickCandidateIndices(provider string, exclude *Credential) []int {
+func (p *Pool) pickCandidateIndices(provider string, exclude *authpkg.Credential) []int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	n := len(p.creds)
@@ -122,14 +124,14 @@ func (p *Pool) pickCandidateIndices(provider string, exclude *Credential) []int 
 	return result
 }
 
-func (p *Pool) needsRefresh(c *Credential) bool {
-	if c.AuthType != AuthOAuth || c.RefreshToken == "" || c.ExpiresAt.IsZero() {
+func (p *Pool) needsRefresh(c *authpkg.Credential) bool {
+	if c.AuthType != authpkg.AuthOAuth || c.RefreshToken == "" || c.ExpiresAt.IsZero() {
 		return false
 	}
 	return time.Until(c.ExpiresAt) <= 5*time.Minute
 }
 
-func (p *Pool) lockForCredential(c *Credential) *sync.Mutex {
+func (p *Pool) lockForCredential(c *authpkg.Credential) *sync.Mutex {
 	key := c.Provider + ":" + c.Source + ":" + c.Label
 	if c.ID != "" {
 		key = c.ID
@@ -145,7 +147,7 @@ func (p *Pool) lockForCredential(c *Credential) *sync.Mutex {
 }
 
 // refresh runs outside the main pool lock to avoid blocking all requests.
-func (p *Pool) refresh(c *Credential) error {
+func (p *Pool) refresh(c *authpkg.Credential) error {
 	lock := p.lockForCredential(c)
 	lock.Lock()
 	defer lock.Unlock()
@@ -169,8 +171,8 @@ func (p *Pool) refresh(c *Credential) error {
 	p.mu.Unlock()
 
 	switch {
-	case provider == "openai" && authType == AuthOAuth && refreshToken != "":
-		at, rt, exp, err := RefreshOpenAIOAuth(refreshToken)
+	case provider == "openai" && authType == authpkg.AuthOAuth && refreshToken != "":
+		at, rt, exp, err := authpkg.RefreshOpenAIOAuth(refreshToken)
 		if err != nil {
 			p.Cooldown(c, 45*time.Second)
 			return err
@@ -181,23 +183,23 @@ func (p *Pool) refresh(c *Credential) error {
 		c.ExpiresAt = exp
 		p.mu.Unlock()
 		if managed && managedID != "" {
-			if err := persistManagedCredentialState(managedID, rt, c.AccountID, c.Email); err != nil {
+			if err := authpkg.PersistManagedCredentialState(managedID, rt, c.AccountID, c.Email); err != nil {
 				slog.Warn("persist managed OpenAI token failed", "label", label, "error", err)
 			}
 		}
 		slog.Info("refreshed OpenAI OAuth token", "label", label, "expires", exp)
 		return nil
 
-	case provider == "anthropic" && authType == AuthOAuth && refreshToken != "":
-		at, rt, exp, err := RefreshClaudeOAuth(refreshToken)
+	case provider == "anthropic" && authType == authpkg.AuthOAuth && refreshToken != "":
+		at, rt, exp, err := authpkg.RefreshClaudeOAuth(refreshToken)
 		if err != nil {
 			p.Cooldown(c, 45*time.Second)
 			// Fallback: try CLI refresh
 			slog.Warn("direct OAuth refresh failed, trying CLI fallback", "error", err)
-			if cliErr := RefreshViaCLI("claude -p . --model haiku --text hi"); cliErr != nil {
+			if cliErr := authpkg.RefreshViaCLI("claude -p . --model haiku --text hi"); cliErr != nil {
 				return fmt.Errorf("claude refresh failed (direct: %w, cli: %v)", err, cliErr)
 			}
-			creds, kerr := LoadFromKeychain()
+			creds, kerr := authpkg.LoadFromKeychain()
 			if kerr != nil || len(creds) == 0 {
 				return fmt.Errorf("re-read keychain after CLI refresh: %w", kerr)
 			}
@@ -207,7 +209,7 @@ func (p *Pool) refresh(c *Credential) error {
 			c.ExpiresAt = creds[0].ExpiresAt
 			p.mu.Unlock()
 			if managed && managedID != "" {
-				if err := persistManagedCredentialState(managedID, creds[0].RefreshToken, c.AccountID, c.Email); err != nil {
+				if err := authpkg.PersistManagedCredentialState(managedID, creds[0].RefreshToken, c.AccountID, c.Email); err != nil {
 					slog.Warn("persist managed Claude token failed", "label", label, "error", err)
 				}
 			}
@@ -220,7 +222,7 @@ func (p *Pool) refresh(c *Credential) error {
 		c.ExpiresAt = exp
 		p.mu.Unlock()
 		if managed && managedID != "" {
-			if err := persistManagedCredentialState(managedID, rt, c.AccountID, c.Email); err != nil {
+			if err := authpkg.PersistManagedCredentialState(managedID, rt, c.AccountID, c.Email); err != nil {
 				slog.Warn("persist managed Claude token failed", "label", label, "error", err)
 			}
 		}
@@ -230,4 +232,8 @@ func (p *Pool) refresh(c *Credential) error {
 	default:
 		return fmt.Errorf("cannot refresh credential type %s/%s", c.Provider, c.AuthType)
 	}
+}
+
+func (p *Pool) RefreshCredential(c *authpkg.Credential) error {
+	return p.refresh(c)
 }
