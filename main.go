@@ -10,6 +10,10 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	httpapipkg "github.com/nghiahoang/launchdock/internal/httpapi"
+	providerspkg "github.com/nghiahoang/launchdock/internal/providers"
 )
 
 var version = "dev"
@@ -49,7 +53,7 @@ func Run() {
 		}
 	}
 
-	creds := LoadAllCredentials()
+	creds := authpkg.LoadAllCredentials()
 	if len(creds) == 0 {
 		slog.Error("no credentials found", "hint", "set ANTHROPIC_API_KEY, OPENAI_API_KEY, or run `launchdock auth login claude`")
 		os.Exit(1)
@@ -58,18 +62,18 @@ func Run() {
 		slog.Info("loaded credential", "provider", c.Provider, "type", c.AuthType, "label", c.Label, "source", c.Source)
 	}
 
-	pool := NewPool(creds)
-	anthropicProvider := &AnthropicProvider{}
-	openaiProvider := &OpenAIProvider{}
-	providers := []Provider{anthropicProvider, openaiProvider}
+	pool := providerspkg.NewPool(creds)
+	anthropicProvider := &providerspkg.AnthropicProvider{}
+	openaiProvider := &providerspkg.OpenAIProvider{}
+	providers := []providerspkg.Provider{anthropicProvider, openaiProvider}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/chat/completions", HandleChatCompletions(pool, providers))
-	mux.HandleFunc("/v1/messages", HandleMessages(pool, anthropicProvider))
-	mux.HandleFunc("/v1/responses", HandleResponses(pool, openaiProvider))
-	mux.HandleFunc("/v1/models", HandleModels(pool, anthropicProvider))
-	mux.HandleFunc("/health", HandleHealth(pool))
-	mux.HandleFunc("/", HandleHealth(pool))
+	mux.HandleFunc("/v1/chat/completions", httpapipkg.HandleChatCompletions(pool, providers))
+	mux.HandleFunc("/v1/messages", httpapipkg.HandleMessages(pool, anthropicProvider))
+	mux.HandleFunc("/v1/responses", httpapipkg.HandleResponses(pool, openaiProvider))
+	mux.HandleFunc("/v1/models", httpapipkg.HandleModels(pool, anthropicProvider))
+	mux.HandleFunc("/health", httpapipkg.HandleHealth(pool))
+	mux.HandleFunc("/", httpapipkg.HandleHealth(pool))
 
 	port := os.Getenv("PORT")
 	if port == "" {

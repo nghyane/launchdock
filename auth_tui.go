@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
 )
 
 func handleAuthInteractive() {
@@ -73,9 +75,9 @@ func handleAuthInteractive() {
 				provider := runPicker("Add credential:", []string{"Claude", "OpenAI", "Anthropic API key", "OpenAI API key"})
 				switch provider {
 				case 0:
-					_, _ = RunOAuthFlow("Claude Account")
+					_, _ = authpkg.RunOAuthFlow("Claude Account")
 				case 1:
-					_, _ = RunOpenAIOAuthFlow("OpenAI Account")
+					_, _ = authpkg.RunOpenAIOAuthFlow("OpenAI Account")
 				case 2:
 					addManagedAPIKeyInteractive("anthropic")
 				case 3:
@@ -90,7 +92,7 @@ func handleAuthInteractive() {
 			selected := views[cursor]
 			oldState = suspendAuthRaw(fd, oldState, func() {
 				if runConfirm("Remove managed credential " + selected.Label + "?") {
-					if err := removeConfigCredential(selected.ID); err != nil {
+					if err := authpkg.RemoveConfigCredential(selected.ID); err != nil {
 						fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 					}
 				}
@@ -100,7 +102,7 @@ func handleAuthInteractive() {
 			if len(views) == 0 || !views[cursor].Managed {
 				continue
 			}
-			_ = toggleConfigCredentialDisabled(views[cursor].ID)
+			_ = authpkg.ToggleConfigCredentialDisabled(views[cursor].ID)
 			views = LoadCredentialViews()
 		}
 	}
@@ -204,7 +206,7 @@ func addManagedAPIKeyInteractive(provider string) {
 		return
 	}
 	label := providerDisplayName(provider) + " API key"
-	if err := saveAPIKeyToConfig(provider, label, key); err != nil {
+	if err := authpkg.SaveAPIKeyToConfig(provider, label, key); err != nil {
 		fmt.Fprintf(os.Stderr, "Save failed: %v\n", err)
 	}
 }

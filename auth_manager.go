@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
 )
 
 type CredentialView struct {
@@ -13,7 +15,7 @@ type CredentialView struct {
 	Label           string
 	Email           string
 	Provider        string
-	AuthType        AuthType
+	AuthType        authpkg.AuthType
 	Source          string
 	SourceKind      string
 	Managed         bool
@@ -27,7 +29,7 @@ type CredentialView struct {
 func LoadCredentialViews() []CredentialView {
 	var views []CredentialView
 
-	if creds, err := LoadFromKeychain(); err == nil {
+	if creds, err := authpkg.LoadFromKeychain(); err == nil {
 		for _, cred := range creds {
 			views = append(views, externalCredentialView(cred, "claude"))
 		}
@@ -35,14 +37,14 @@ func LoadCredentialViews() []CredentialView {
 
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		if creds, err := LoadFromFile(filepath.Join(home, ".codex", "auth.json")); err == nil {
+		if creds, err := authpkg.LoadFromFile(filepath.Join(home, ".codex", "auth.json")); err == nil {
 			for _, cred := range creds {
 				views = append(views, externalCredentialView(cred, "codex"))
 			}
 		}
 	}
 
-	for _, cc := range loadConfig().Credentials {
+	for _, cc := range authpkg.LoadConfig().Credentials {
 		views = append(views, managedCredentialView(cc))
 	}
 
@@ -78,18 +80,18 @@ func enrichViewEmails(views []CredentialView) {
 	}
 }
 
-func externalCredentialView(cred Credential, sourceKind string) CredentialView {
+func externalCredentialView(cred authpkg.Credential, sourceKind string) CredentialView {
 	status := "healthy"
 	message := "available"
 	if cred.IsExpired() {
 		status = "expired"
 		message = "access token expired"
 	}
-	if cred.AuthType == AuthAPIKey {
+	if cred.AuthType == authpkg.AuthAPIKey {
 		message = "api key available"
 	}
 	if sourceKind == "claude" {
-		profile := LoadClaudeProfile()
+		profile := authpkg.LoadClaudeProfile()
 		if cred.Email == "" {
 			cred.Email = profile.Email
 		}
@@ -128,13 +130,13 @@ func humanizeClaudeSubscription(raw string) string {
 	}
 }
 
-func managedCredentialView(cc ConfigCredential) CredentialView {
+func managedCredentialView(cc authpkg.ConfigCredential) CredentialView {
 	v := CredentialView{
 		ID:              cc.ID,
 		Label:           cc.Label,
 		Email:           cc.Email,
 		Provider:        cc.Provider,
-		Source:          "config:" + configPath(),
+		Source:          "config:" + authpkg.ConfigPath(),
 		SourceKind:      "managed",
 		Managed:         true,
 		Disabled:        cc.Disabled,
@@ -142,7 +144,7 @@ func managedCredentialView(cc ConfigCredential) CredentialView {
 		CompatibleTools: compatibleToolsForProvider(cc.Provider),
 	}
 	if cc.APIKey != "" {
-		v.AuthType = AuthAPIKey
+		v.AuthType = authpkg.AuthAPIKey
 		if cc.Disabled {
 			v.Status = "disabled"
 			v.StatusMessage = "disabled in launchdock"
@@ -152,7 +154,7 @@ func managedCredentialView(cc ConfigCredential) CredentialView {
 		}
 		return v
 	}
-	v.AuthType = AuthOAuth
+	v.AuthType = authpkg.AuthOAuth
 	if cc.Disabled {
 		v.Status = "disabled"
 		v.StatusMessage = "disabled in launchdock"
@@ -165,9 +167,9 @@ func managedCredentialView(cc ConfigCredential) CredentialView {
 	}
 	var err error
 	if cc.Provider == "anthropic" {
-		_, _, _, err = RefreshClaudeOAuth(cc.RefreshToken)
+		_, _, _, err = authpkg.RefreshClaudeOAuth(cc.RefreshToken)
 	} else if cc.Provider == "openai" {
-		_, _, _, err = RefreshOpenAIOAuth(cc.RefreshToken)
+		_, _, _, err = authpkg.RefreshOpenAIOAuth(cc.RefreshToken)
 	}
 	if err != nil {
 		v.Status = "stale"
@@ -230,7 +232,7 @@ func authDisplayName(v CredentialView) string {
 	if v.Email != "" {
 		return v.Email
 	}
-	if v.AuthType == AuthAPIKey {
+	if v.AuthType == authpkg.AuthAPIKey {
 		return "API key"
 	}
 	return v.Label

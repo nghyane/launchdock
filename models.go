@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	httpapipkg "github.com/nghiahoang/launchdock/internal/httpapi"
+	providerspkg "github.com/nghiahoang/launchdock/internal/providers"
 )
 
 type LaunchModel struct {
@@ -92,14 +96,14 @@ func resolveLaunchConfig() LaunchConfig {
 		Level: slog.LevelError,
 	})))
 
-	creds := LoadAllCredentials()
+	creds := authpkg.LoadAllCredentials()
 	cfg.HasCreds = len(creds) > 0
 	if !cfg.HasCreds {
 		return cfg
 	}
 
-	pool := NewPool(creds)
-	for _, m := range fetchAllModels(pool, &AnthropicProvider{}) {
+	pool := providerspkg.NewPool(creds)
+	for _, m := range httpapipkg.FetchAllModels(pool, &providerspkg.AnthropicProvider{}) {
 		id, _ := m["id"].(string)
 		owner, _ := m["owned_by"].(string)
 		if id != "" {

@@ -13,16 +13,19 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	httpxpkg "github.com/nghiahoang/launchdock/internal/httpx"
 )
 
 type authExportPayload struct {
-	Version     int                `json:"version"`
-	ExportedAt  string             `json:"exported_at"`
-	Credentials []ConfigCredential `json:"credentials"`
+	Version     int                        `json:"version"`
+	ExportedAt  string                     `json:"exported_at"`
+	Credentials []authpkg.ConfigCredential `json:"credentials"`
 }
 
-func managedConfigCredentials(ids []string) ([]ConfigCredential, error) {
-	cfg := loadConfig()
+func managedConfigCredentials(ids []string) ([]authpkg.ConfigCredential, error) {
+	cfg := authpkg.LoadConfig()
 	if len(ids) == 0 {
 		if len(cfg.Credentials) == 0 {
 			return nil, fmt.Errorf("no managed credentials to export")
@@ -33,7 +36,7 @@ func managedConfigCredentials(ids []string) ([]ConfigCredential, error) {
 	for _, id := range ids {
 		lookup[id] = true
 	}
-	var out []ConfigCredential
+	var out []authpkg.ConfigCredential
 	for _, cc := range cfg.Credentials {
 		if lookup[cc.ID] {
 			out = append(out, cc)
@@ -77,8 +80,8 @@ func importManagedCredentials(r io.Reader) (int, error) {
 	return mergeImportedCredentials(payload.Credentials)
 }
 
-func mergeImportedCredentials(imported []ConfigCredential) (int, error) {
-	cfg := loadConfig()
+func mergeImportedCredentials(imported []authpkg.ConfigCredential) (int, error) {
+	cfg := authpkg.LoadConfig()
 	index := map[string]int{}
 	for i, cc := range cfg.Credentials {
 		index[cc.ID] = i
@@ -86,7 +89,7 @@ func mergeImportedCredentials(imported []ConfigCredential) (int, error) {
 	count := 0
 	for _, cc := range imported {
 		if cc.ID == "" {
-			cc.ID = generateCredentialID()
+			cc.ID = authpkg.GenerateCredentialID()
 		}
 		if i, ok := index[cc.ID]; ok {
 			cfg.Credentials[i] = cc
@@ -96,7 +99,7 @@ func mergeImportedCredentials(imported []ConfigCredential) (int, error) {
 		}
 		count++
 	}
-	return count, saveConfig(cfg)
+	return count, authpkg.SaveConfig(cfg)
 }
 
 func handleAuthExport() {
@@ -235,7 +238,7 @@ func latestReleaseVersion() string {
 	}
 	req.Header.Set("User-Agent", "launchdock/"+currentVersion())
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := APIClient.Do(req)
+	resp, err := httpxpkg.APIClient.Do(req)
 	if err != nil {
 		return ""
 	}
@@ -349,7 +352,7 @@ func downloadFile(url, path string) error {
 		return err
 	}
 	req.Header.Set("User-Agent", "launchdock/"+currentVersion())
-	resp, err := APIClient.Do(req)
+	resp, err := httpxpkg.APIClient.Do(req)
 	if err != nil {
 		return err
 	}

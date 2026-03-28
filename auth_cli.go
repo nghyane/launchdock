@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
 )
 
 func handleAuthCommand() {
@@ -43,7 +45,7 @@ func handleAuthRemove() {
 		os.Exit(1)
 	}
 	id := os.Args[3]
-	if err := removeConfigCredential(id); err != nil {
+	if err := authpkg.RemoveConfigCredential(id); err != nil {
 		fmt.Fprintf(os.Stderr, "Remove failed: %v\n", err)
 		os.Exit(1)
 	}
@@ -72,14 +74,14 @@ func handleAuthLogin() {
 		if len(os.Args) >= 5 {
 			label = os.Args[4]
 		}
-		cred, err := RunOAuthFlow(label)
+		cred, err := authpkg.RunOAuthFlow(label)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Auth failed: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "\nAuthenticated: %s\n", cred.Label)
 		fmt.Fprintf(os.Stderr, "Token expires: %s\n", cred.ExpiresAt.Format(time.RFC3339))
-		fmt.Fprintf(os.Stderr, "Saved to: %s\n", configPath())
+		fmt.Fprintf(os.Stderr, "Saved to: %s\n", authpkg.ConfigPath())
 	case "openai", "codex":
 		handleOpenAILogin()
 	default:
@@ -90,7 +92,7 @@ func handleAuthLogin() {
 }
 
 func handleOpenAILogin() {
-	cred, err := RunOpenAIOAuthFlow("OpenAI Account")
+	cred, err := authpkg.RunOpenAIOAuthFlow("OpenAI Account")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Auth failed: %v\n", err)
 		os.Exit(1)
@@ -102,7 +104,7 @@ func handleOpenAILogin() {
 	if cred.AccountID != "" {
 		fmt.Fprintf(os.Stderr, "Account ID: %s\n", cred.AccountID)
 	}
-	fmt.Fprintf(os.Stderr, "Saved to: %s\n", configPath())
+	fmt.Fprintf(os.Stderr, "Saved to: %s\n", authpkg.ConfigPath())
 }
 
 func printAuthHelp() {
