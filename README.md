@@ -6,14 +6,14 @@
 
 Use Claude Max or ChatGPT across AI coding tools.
 
-`launchdock` turns the accounts you already have into one local endpoint for tools like OpenCode, Codex, Claude Code, Droid, and Pi.
+`launchdock` gives you one local endpoint for tools like OpenCode, Codex, Claude Code, Droid, and Pi.
 
 Why people use it:
 
-- use `opencode` or `codex` even if you only have Claude Max or ChatGPT auth
+- use OpenCode or Codex with the accounts you already have
 - avoid managing separate API keys everywhere
-- log in once and reuse that account across multiple tools
-- push your managed auth to a personal server and keep it running 24/7
+- log in once and reuse that auth across multiple tools
+- push managed auth to a personal server when needed
 
 ## Install
 
@@ -28,8 +28,6 @@ Optional:
 curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | env LAUNCHDOCK_VERSION=v0.1.1 sh
 curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | env INSTALL_DIR=/usr/local/bin sh
 ```
-
-The installer downloads the right GitHub Release, verifies its checksum, and installs `launchdock` into `~/.local/bin` by default.
 
 ## Quickstart
 
@@ -60,31 +58,36 @@ ssh user@server.example.com '$HOME/.local/bin/launchdock start'
 - `droid`
 - `pi`
 
+## Compatibility
+
+`launchdock` is tested with the official OpenAI SDK and works across both Claude and GPT models.
+
+Validated locally with `claude-opus-4-6` and `gpt-5.4` for:
+
+- basic chat
+- multi-turn conversations
+- streaming
+- tool calls
+- tool result round-trips
+
+Supported API surfaces:
+
+- `/v1/chat/completions`
+- `/v1/responses`
+- `/v1/messages`
+
 ## Commands
 
 ```bash
 launchdock auth
-launchdock auth list
-launchdock auth login claude [label]
-launchdock auth login openai
-launchdock auth push <ssh-target> [credential-id ...]
-launchdock auth remove <credential-id>
-
 launchdock launch [tool]
 launchdock start | ps | logs | restart | stop
 launchdock update
-launchdock version
 ```
 
 ## Technical note
 
-`launchdock` runs a local runtime on `http://localhost:8090` and exposes:
-
-- `/v1/chat/completions`
-- `/v1/messages`
-- `/v1/responses`
-- `/v1/models`
-- `/health`
+`launchdock` runs on `http://localhost:8090`.
 
 State lives in:
 
