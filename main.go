@@ -24,6 +24,9 @@ func main() {
 		case "auth":
 			handleAuthCommand()
 			return
+		case "setup":
+			handleSetupCommand()
+			return
 		}
 	}
 
