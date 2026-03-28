@@ -24,6 +24,42 @@ In short: one login, many tools, one local endpoint.
 - one launch flow that writes config and starts the runtime automatically
 - support for multiple discovered accounts and credential rotation
 
+## Install
+
+### Local install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | sh
+launchdock version
+```
+
+Optional:
+
+```bash
+# install a specific version
+curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | LAUNCHDOCK_VERSION=v0.1.0 sh
+
+# install into a custom directory
+curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | INSTALL_DIR=/usr/local/bin sh
+```
+
+The installer:
+
+- detects your OS and CPU architecture
+- downloads the matching GitHub Release asset
+- verifies the release checksum
+- installs `launchdock` into `~/.local/bin` by default
+
+### Personal servers
+
+You usually do not need to install `launchdock` manually on your VPS.
+
+```bash
+launchdock auth push my-vps
+```
+
+That command will install or update `launchdock` on the remote host automatically, then import your managed credentials.
+
 ## Quickstart
 
 ```bash
