@@ -57,13 +57,17 @@ func HandleResponses(pool *Pool, openai *OpenAIProvider) http.HandlerFunc {
 
 		upResp, cred, err := ensureOKOrRetry(pool, "openai", cred, func(current *Credential) (*http.Response, error) {
 			var upstreamURL string
+			requestBody := body
 			if current.AuthType == AuthOAuth {
 				upstreamURL = openai.ChatGPTBaseURL() + "/responses"
+				if !peek.Stream {
+					requestBody = ensureResponsesStream(body)
+				}
 			} else {
 				upstreamURL = openai.BaseURL() + "/v1/responses"
 			}
 			upReq, err := http.NewRequestWithContext(r.Context(), "POST",
-				upstreamURL, bytes.NewReader(body))
+				upstreamURL, bytes.NewReader(requestBody))
 			if err != nil {
 				return nil, err
 			}
@@ -93,7 +97,11 @@ func HandleResponses(pool *Pool, openai *OpenAIProvider) http.HandlerFunc {
 		if peek.Stream {
 			relayResponsesStream(w, upResp)
 		} else {
-			relayResponsesNonStream(w, upResp)
+			if cred.AuthType == AuthOAuth {
+				relayResponsesCollectedNonStream(w, upResp)
+			} else {
+				relayResponsesNonStream(w, upResp)
+			}
 		}
 	}
 }
@@ -119,6 +127,19 @@ func ensureResponsesInstructions(body []byte) []byte {
 			}
 		}
 	}
+	out, err := json.Marshal(req)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+func ensureResponsesStream(body []byte) []byte {
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body
+	}
+	req["stream"] = true
 	out, err := json.Marshal(req)
 	if err != nil {
 		return body
@@ -172,4 +193,27 @@ func relayResponsesNonStream(w http.ResponseWriter, upResp *http.Response) {
 		w.Header().Set("x-codex-turn-state", v)
 	}
 	w.Write(body)
+}
+
+func relayResponsesCollectedNonStream(w http.ResponseWriter, upResp *http.Response) {
+	var finalResponse any
+	ReadSSE(upResp.Body, func(ev SSEEvent) error {
+		var obj map[string]any
+		if json.Unmarshal([]byte(ev.Data), &obj) != nil {
+			return nil
+		}
+		if typ, _ := obj["type"].(string); typ == "response.completed" {
+			finalResponse = obj["response"]
+		}
+		return nil
+	})
+	if finalResponse == nil {
+		httpError(w, http.StatusBadGateway, "missing response.completed event")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if v := upResp.Header.Get("x-codex-turn-state"); v != "" {
+		w.Header().Set("x-codex-turn-state", v)
+	}
+	json.NewEncoder(w).Encode(finalResponse)
 }
