@@ -27,7 +27,6 @@ type ChatStreamChunk = protocol.ChatStreamChunk
 type ChatChoice = protocol.ChatChoice
 type ChatResponse = protocol.ChatResponse
 type ChatUsage = protocol.ChatUsage
-type PromptTokensDetails = protocol.PromptTokensDetails
 type SSEWriter = protocol.SSEWriter
 type SSEEvent = protocol.SSEEvent
 type ClaudeResponse = protocol.ClaudeResponse
@@ -40,9 +39,8 @@ var (
 	APIClient    = httpxpkg.APIClient
 )
 
-func RouteProvider(providers []Provider, model string) Provider {
-	return providerspkg.RouteProvider(providers, model)
-}
+func NewSSEWriter(w http.ResponseWriter) (*SSEWriter, bool) { return protocol.NewSSEWriter(w) }
+func ReadSSE(r io.Reader, fn func(SSEEvent) error) error    { return protocol.ReadSSE(r, fn) }
 func PrefixTools(body []byte, prefix string) ([]byte, error) {
 	return providerspkg.PrefixTools(body, prefix)
 }
@@ -52,8 +50,6 @@ func EnsureOAuthRequirements(body []byte) ([]byte, error) {
 func StripToolPrefix(data []byte, prefix string) []byte {
 	return providerspkg.StripToolPrefix(data, prefix)
 }
-func NewSSEWriter(w http.ResponseWriter) (*SSEWriter, bool) { return protocol.NewSSEWriter(w) }
-func ReadSSE(r io.Reader, fn func(SSEEvent) error) error    { return protocol.ReadSSE(r, fn) }
 func ChatToResponsesRequest(body []byte) ([]byte, error) {
 	return protocol.ChatToResponsesRequest(body)
 }

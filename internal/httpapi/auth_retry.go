@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	providerspkg "github.com/nghiahoang/launchdock/internal/providers"
 )
 
 func isAuthFailure(provider string, statusCode int, body []byte) bool {
@@ -69,7 +72,7 @@ func authFailureMessage(provider string, body []byte) string {
 	return string(body)
 }
 
-func doWithCredentialRetry(pool *Pool, providerName string, cred *Credential, attempt func(*Credential) (*http.Response, error)) (*http.Response, *Credential, error) {
+func doWithCredentialRetry(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, attempt func(*authpkg.Credential) (*http.Response, error)) (*http.Response, *authpkg.Credential, error) {
 	refreshedSame := false
 	fallbackTried := false
 
@@ -86,7 +89,7 @@ func doWithCredentialRetry(pool *Pool, providerName string, cred *Credential, at
 		resp.Body.Close()
 
 		if isAuthFailure(providerName, resp.StatusCode, errBody) {
-			if !refreshedSame && cred.AuthType == AuthOAuth && cred.RefreshToken != "" {
+			if !refreshedSame && cred.AuthType == authpkg.AuthOAuth && cred.RefreshToken != "" {
 				refreshedSame = true
 				if err := pool.RefreshCredential(cred); err == nil {
 					slog.Warn("auth failure recovered by refresh", "provider", providerName, "credential", cred.Label)
@@ -135,7 +138,7 @@ func rebuildErrorResponse(resp *http.Response, body []byte) *http.Response {
 	}
 }
 
-func ensureOKOrRetry(pool *Pool, providerName string, cred *Credential, attempt func(*Credential) (*http.Response, error)) (*http.Response, *Credential, error) {
+func ensureOKOrRetry(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, attempt func(*authpkg.Credential) (*http.Response, error)) (*http.Response, *authpkg.Credential, error) {
 	resp, nextCred, err := doWithCredentialRetry(pool, providerName, cred, attempt)
 	if err != nil {
 		return nil, nextCred, err

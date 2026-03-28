@@ -112,7 +112,7 @@ func RunOAuthFlow(label string) (*Credential, error) {
 	}
 
 	// Save to config
-	if err := saveCredentialToConfig(cred); err != nil {
+	if err := SaveCredentialToConfig(cred); err != nil {
 		slog.Warn("failed to save credential to config", "error", err)
 	}
 
@@ -192,7 +192,7 @@ func RunOpenAIOAuthFlow(label string) (*Credential, error) {
 	if err != nil {
 		return nil, fmt.Errorf("token exchange: %w", err)
 	}
-	if err := saveCredentialToConfig(cred); err != nil {
+	if err := SaveCredentialToConfig(cred); err != nil {
 		slog.Warn("failed to save credential to config", "error", err)
 	}
 	return cred, nil
@@ -313,13 +313,13 @@ type ConfigCredential struct {
 	Disabled     bool   `json:"disabled,omitempty"`
 }
 
-func configPath() string {
+func ConfigPath() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "launchdock", "config.json")
 }
 
-func loadConfig() *Config {
-	data, err := os.ReadFile(configPath())
+func LoadConfig() *Config {
+	data, err := os.ReadFile(ConfigPath())
 	if err != nil {
 		return &Config{AutoDiscover: true}
 	}
@@ -329,14 +329,14 @@ func loadConfig() *Config {
 	}
 	for i := range cfg.Credentials {
 		if cfg.Credentials[i].ID == "" {
-			cfg.Credentials[i].ID = generateCredentialID()
+			cfg.Credentials[i].ID = GenerateCredentialID()
 		}
 	}
 	return &cfg
 }
 
-func saveConfig(cfg *Config) error {
-	dir := filepath.Dir(configPath())
+func SaveConfig(cfg *Config) error {
+	dir := filepath.Dir(ConfigPath())
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
@@ -344,13 +344,13 @@ func saveConfig(cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), data, 0600)
+	return os.WriteFile(ConfigPath(), data, 0600)
 }
 
-func saveCredentialToConfig(cred *Credential) error {
-	cfg := loadConfig()
+func SaveCredentialToConfig(cred *Credential) error {
+	cfg := LoadConfig()
 	cfg.Credentials = append(cfg.Credentials, ConfigCredential{
-		ID:           generateCredentialID(),
+		ID:           GenerateCredentialID(),
 		Label:        cred.Label,
 		Provider:     cred.Provider,
 		RefreshToken: cred.RefreshToken,
@@ -358,32 +358,32 @@ func saveCredentialToConfig(cred *Credential) error {
 		AccountID:    cred.AccountID,
 		Email:        cred.Email,
 	})
-	return saveConfig(cfg)
+	return SaveConfig(cfg)
 }
 
-func saveAPIKeyToConfig(provider, label, apiKey string) error {
+func SaveAPIKeyToConfig(provider, label, apiKey string) error {
 	if strings.TrimSpace(apiKey) == "" {
 		return fmt.Errorf("api key is empty")
 	}
 	if label == "" {
 		label = strings.ToUpper(provider) + " API key"
 	}
-	cfg := loadConfig()
+	cfg := LoadConfig()
 	cfg.Credentials = append(cfg.Credentials, ConfigCredential{
-		ID:       generateCredentialID(),
+		ID:       GenerateCredentialID(),
 		Label:    label,
 		Provider: provider,
 		APIKey:   apiKey,
 	})
-	return saveConfig(cfg)
+	return SaveConfig(cfg)
 }
 
-func generateCredentialID() string {
+func GenerateCredentialID() string {
 	return "cred_" + generateState()
 }
 
-func removeConfigCredential(id string) error {
-	cfg := loadConfig()
+func RemoveConfigCredential(id string) error {
+	cfg := LoadConfig()
 	var filtered []ConfigCredential
 	removed := false
 	for _, cc := range cfg.Credentials {
@@ -397,22 +397,22 @@ func removeConfigCredential(id string) error {
 		return fmt.Errorf("credential not found")
 	}
 	cfg.Credentials = filtered
-	return saveConfig(cfg)
+	return SaveConfig(cfg)
 }
 
-func toggleConfigCredentialDisabled(id string) error {
-	cfg := loadConfig()
+func ToggleConfigCredentialDisabled(id string) error {
+	cfg := LoadConfig()
 	for i := range cfg.Credentials {
 		if cfg.Credentials[i].ID == id {
 			cfg.Credentials[i].Disabled = !cfg.Credentials[i].Disabled
-			return saveConfig(cfg)
+			return SaveConfig(cfg)
 		}
 	}
 	return fmt.Errorf("credential not found")
 }
 
-func persistManagedCredentialState(id, refreshToken, accountID, email string) error {
-	cfg := loadConfig()
+func PersistManagedCredentialState(id, refreshToken, accountID, email string) error {
+	cfg := LoadConfig()
 	for i := range cfg.Credentials {
 		if cfg.Credentials[i].ID != id {
 			continue
@@ -426,14 +426,14 @@ func persistManagedCredentialState(id, refreshToken, accountID, email string) er
 		if email != "" {
 			cfg.Credentials[i].Email = email
 		}
-		return saveConfig(cfg)
+		return SaveConfig(cfg)
 	}
 	return fmt.Errorf("managed credential not found")
 }
 
 // LoadFromConfig loads credentials from ~/.config/launchdock/config.json
 func LoadFromConfig() []Credential {
-	cfg := loadConfig()
+	cfg := LoadConfig()
 	var creds []Credential
 	for _, cc := range cfg.Credentials {
 		if cc.Disabled {
@@ -445,7 +445,7 @@ func LoadFromConfig() []Credential {
 				Provider: cc.Provider,
 				AuthType: AuthAPIKey,
 				Label:    cc.Label,
-				Source:   "config:" + configPath(),
+				Source:   "config:" + ConfigPath(),
 				Managed:  true,
 				Email:    cc.Email,
 				APIKey:   cc.APIKey,
@@ -470,7 +470,7 @@ func LoadFromConfig() []Credential {
 					Provider:     cc.Provider,
 					AuthType:     AuthOAuth,
 					Label:        cc.Label,
-					Source:       "config:" + configPath(),
+					Source:       "config:" + ConfigPath(),
 					Managed:      true,
 					RefreshToken: cc.RefreshToken,
 					AccountID:    cc.AccountID,
@@ -482,7 +482,7 @@ func LoadFromConfig() []Credential {
 					Provider:     cc.Provider,
 					AuthType:     AuthOAuth,
 					Label:        cc.Label,
-					Source:       "config:" + configPath(),
+					Source:       "config:" + ConfigPath(),
 					Managed:      true,
 					AccessToken:  at,
 					RefreshToken: rt,
