@@ -121,6 +121,16 @@ func ensureResponsesInstructions(body []byte) []byte {
 		req["instructions"] = "You are a helpful assistant."
 	}
 	req["store"] = false
+
+	// Codex-optimal defaults
+	if _, ok := req["tool_choice"]; !ok {
+		if tools, ok := req["tools"]; ok {
+			if toolsArr, ok := tools.([]any); ok && len(toolsArr) > 0 {
+				req["tool_choice"] = "auto"
+				req["parallel_tool_calls"] = true
+			}
+		}
+	}
 	out, err := json.Marshal(req)
 	if err != nil {
 		return body

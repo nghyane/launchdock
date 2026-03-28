@@ -109,6 +109,37 @@ func ChatToResponsesRequest(body []byte) ([]byte, error) {
 	// Tools — same format in both APIs
 	if tools, ok := chat["tools"]; ok {
 		resp["tools"] = tools
+		resp["tool_choice"] = "auto"
+		resp["parallel_tool_calls"] = true
+	}
+
+	// Service tier — only set if explicitly passed
+	if tier, ok := chat["service_tier"]; ok {
+		resp["service_tier"] = tier
+	}
+
+	// Reasoning — passthrough if present, or set defaults for capable models
+	if reasoning, ok := chat["reasoning"]; ok {
+		resp["reasoning"] = reasoning
+	} else if reasoning, ok := chat["reasoning_effort"]; ok {
+		// OpenAI SDK sends reasoning_effort as string
+		resp["reasoning"] = map[string]any{"effort": reasoning}
+	}
+
+	// Text verbosity — low for concise responses by default
+	if text, ok := chat["text"]; ok {
+		resp["text"] = text
+	}
+
+	// Prompt cache key — use conversation_id if provided, or generate stable one
+	// This enables server-side prompt caching across turns
+	if cacheKey, ok := chat["prompt_cache_key"]; ok {
+		resp["prompt_cache_key"] = cacheKey
+	}
+
+	// Previous response ID — chain responses for incremental context
+	if prevID, ok := chat["previous_response_id"]; ok {
+		resp["previous_response_id"] = prevID
 	}
 
 	return json.Marshal(resp)
