@@ -53,7 +53,7 @@ func HandleMessages(pool *Pool, anthropic *AnthropicProvider) http.HandlerFunc {
 		// Apply OAuth quirks if needed
 		if cred.AuthType == AuthOAuth {
 			body, _ = PrefixTools(body, "mcp_")
-			body, _ = ensureOAuthRequirements(body)
+			body, _ = EnsureOAuthRequirements(body)
 		}
 
 		upResp, cred, err := ensureOKOrRetry(pool, "anthropic", cred, func(current *Credential) (*http.Response, error) {

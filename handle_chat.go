@@ -74,7 +74,7 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 		// Apply OAuth quirks for Anthropic
 		if _, ok := provider.(*AnthropicProvider); ok && cred.AuthType == AuthOAuth {
 			upstreamBody, _ = PrefixTools(upstreamBody, "mcp_")
-			upstreamBody, _ = ensureOAuthRequirements(upstreamBody)
+			upstreamBody, _ = EnsureOAuthRequirements(upstreamBody)
 		}
 
 		// Send with retry on retryable errors

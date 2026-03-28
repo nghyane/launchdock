@@ -1,4 +1,4 @@
-package launchdock
+package auth
 
 import (
 	"bytes"

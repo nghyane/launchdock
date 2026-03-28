@@ -1,9 +1,12 @@
-package launchdock
+package providers
 
 import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	protocol "github.com/nghiahoang/launchdock/internal/protocol"
 )
 
 // OpenAIProvider handles OpenAI API communication (mostly passthrough).
@@ -29,20 +32,20 @@ func (p *OpenAIProvider) ChatGPTBaseURL() string {
 	return "https://chatgpt.com/backend-api/codex"
 }
 
-func (p *OpenAIProvider) Prepare(req *http.Request, cred *Credential) {
+func (p *OpenAIProvider) Prepare(req *http.Request, cred *authpkg.Credential) {
 	switch cred.AuthType {
-	case AuthOAuth:
+	case authpkg.AuthOAuth:
 		req.Header.Set("Authorization", "Bearer "+cred.AccessToken)
 		if cred.AccountID != "" {
 			req.Header.Set("chatgpt-account-id", cred.AccountID)
 		}
-	case AuthAPIKey:
+	case authpkg.AuthAPIKey:
 		req.Header.Set("Authorization", "Bearer "+cred.APIKey)
 	}
 	req.Header.Set("Content-Type", "application/json")
 }
 
-func (p *OpenAIProvider) TranslateRequest(chatReq *ChatRequest) ([]byte, string, error) {
+func (p *OpenAIProvider) TranslateRequest(chatReq *protocol.ChatRequest) ([]byte, string, error) {
 	// OpenAI Chat Completions is passthrough — no translation needed.
 	// We re-encode to ensure clean JSON.
 	body, err := json.Marshal(chatReq)

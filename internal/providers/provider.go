@@ -1,8 +1,11 @@
-package launchdock
+package providers
 
 import (
 	"net/http"
 	"strings"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	protocol "github.com/nghiahoang/launchdock/internal/protocol"
 )
 
 // Provider handles upstream communication for a specific backend.
@@ -11,7 +14,7 @@ type Provider interface {
 	Match(model string) bool
 
 	// Prepare adds auth headers and provider-specific modifications to the upstream request.
-	Prepare(req *http.Request, cred *Credential)
+	Prepare(req *http.Request, cred *authpkg.Credential)
 
 	// ProviderName returns the credential provider name (e.g. "anthropic", "openai").
 	ProviderName() string
@@ -21,7 +24,7 @@ type Provider interface {
 
 	// TranslateRequest converts a ChatRequest into the provider's native request body.
 	// Returns the body bytes and target URL path.
-	TranslateRequest(chatReq *ChatRequest) (body []byte, path string, err error)
+	TranslateRequest(chatReq *protocol.ChatRequest) (body []byte, path string, err error)
 }
 
 // RouteProvider selects the appropriate provider based on model name.

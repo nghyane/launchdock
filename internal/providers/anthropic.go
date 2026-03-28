@@ -1,4 +1,4 @@
-package launchdock
+package providers
 
 import (
 	"crypto/sha256"
@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	authpkg "github.com/nghiahoang/launchdock/internal/auth"
+	protocol "github.com/nghiahoang/launchdock/internal/protocol"
 )
 
 // AnthropicProvider handles Claude API communication.
@@ -22,24 +25,24 @@ func (p *AnthropicProvider) Match(model string) bool {
 func (p *AnthropicProvider) ProviderName() string { return "anthropic" }
 func (p *AnthropicProvider) BaseURL() string      { return "https://api.anthropic.com" }
 
-func (p *AnthropicProvider) Prepare(req *http.Request, cred *Credential) {
+func (p *AnthropicProvider) Prepare(req *http.Request, cred *authpkg.Credential) {
 	p.PrepareWithModel(req, cred, "")
 }
 
-func (p *AnthropicProvider) PrepareWithModel(req *http.Request, cred *Credential, model string) {
+func (p *AnthropicProvider) PrepareWithModel(req *http.Request, cred *authpkg.Credential, model string) {
 	switch cred.AuthType {
-	case AuthOAuth:
+	case authpkg.AuthOAuth:
 		req.Header.Set("Authorization", "Bearer "+cred.AccessToken)
 		applyOAuthHeaders(req, model)
-	case AuthAPIKey:
+	case authpkg.AuthAPIKey:
 		req.Header.Set("x-api-key", cred.APIKey)
 	}
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")
 }
 
-func (p *AnthropicProvider) TranslateRequest(chatReq *ChatRequest) ([]byte, string, error) {
-	claudeReq, err := ChatToClaudeRequest(chatReq)
+func (p *AnthropicProvider) TranslateRequest(chatReq *protocol.ChatRequest) ([]byte, string, error) {
+	claudeReq, err := protocol.ChatToClaudeRequest(chatReq)
 	if err != nil {
 		return nil, "", err
 	}
@@ -176,7 +179,7 @@ func StripToolPrefix(data []byte, prefix string) []byte {
 
 // ensureOAuthRequirements ensures the request has system prompt identity
 // and at least one tool (required by Claude OAuth).
-func ensureOAuthRequirements(body []byte) ([]byte, error) {
+func EnsureOAuthRequirements(body []byte) ([]byte, error) {
 	var req map[string]any
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body, err
