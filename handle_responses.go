@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 )
 
 // HandleResponses handles POST /v1/responses (OpenAI Responses API passthrough)
@@ -88,8 +87,7 @@ func HandleResponses(pool *Pool, openai *OpenAIProvider) http.HandlerFunc {
 			}
 		}
 
-		client := &http.Client{Timeout: 10 * time.Minute}
-		upResp, err := client.Do(upReq)
+		upResp, err := StreamClient.Do(upReq)
 		if err != nil {
 			httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
 			return

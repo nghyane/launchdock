@@ -132,8 +132,7 @@ func exchangeCodeForTokens(code, verifier, state, redirectURI, label string) (*C
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := APIClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

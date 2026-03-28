@@ -7,7 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 )
 
 // HandleMessages handles POST /v1/messages (Claude Messages API passthrough)
@@ -67,8 +66,7 @@ func HandleMessages(pool *Pool, anthropic *AnthropicProvider) http.HandlerFunc {
 
 		anthropic.PrepareWithModel(upReq, cred, peek.Model)
 
-		client := &http.Client{Timeout: 5 * time.Minute}
-		upResp, err := client.Do(upReq)
+		upResp, err := StreamClient.Do(upReq)
 		if err != nil {
 			httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
 			return

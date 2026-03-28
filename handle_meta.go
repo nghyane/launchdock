@@ -96,8 +96,7 @@ func fetchAnthropicModels(pool *Pool, provider *AnthropicProvider) []map[string]
 	}
 	provider.PrepareWithModel(req, cred, "")
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := APIClient.Do(req)
 	if err != nil {
 		slog.Debug("anthropic models fetch failed", "error", err)
 		return nil
@@ -166,8 +165,7 @@ func openAIModels() []map[string]any {
 }
 
 func fetchCodexModels() []map[string]any {
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(codexModelsURL)
+	resp, err := APIClient.Get(codexModelsURL)
 	if err != nil {
 		slog.Debug("codex models fetch failed", "error", err)
 		return nil

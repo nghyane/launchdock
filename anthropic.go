@@ -200,7 +200,7 @@ func ensureOAuthRequirements(body []byte) ([]byte, error) {
 		systemBlocks = append(systemBlocks, map[string]any{
 			"type":          "text",
 			"text":          identity,
-			"cache_control": map[string]string{"type": "ephemeral"},
+			"cache_control": map[string]any{"type": "ephemeral", "ttl": "1h"},
 		})
 
 		switch s := existing.(type) {
@@ -237,12 +237,12 @@ func ensureOAuthRequirements(body []byte) ([]byte, error) {
 				msg["content"] = []map[string]any{{
 					"type":          "text",
 					"text":          c,
-					"cache_control": map[string]string{"type": "ephemeral"},
+					"cache_control": map[string]any{"type": "ephemeral", "ttl": "1h"},
 				}}
 			case []any:
 				if len(c) > 0 {
 					if last, ok := c[len(c)-1].(map[string]any); ok {
-						last["cache_control"] = map[string]string{"type": "ephemeral"}
+						last["cache_control"] = map[string]any{"type": "ephemeral", "ttl": "1h"}
 					}
 				}
 			}

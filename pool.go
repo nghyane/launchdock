@@ -17,9 +17,42 @@ type Pool struct {
 }
 
 func NewPool(creds []Credential) *Pool {
-	return &Pool{
+	p := &Pool{
 		creds:      creds,
 		refreshing: make(map[string]bool),
+	}
+	go p.backgroundRefreshLoop()
+	return p
+}
+
+// backgroundRefreshLoop pre-refreshes tokens 5 minutes before expiry.
+func (p *Pool) backgroundRefreshLoop() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		p.mu.Lock()
+		var needsRefresh []*Credential
+		for i := range p.creds {
+			c := &p.creds[i]
+			if c.AuthType != AuthOAuth || c.RefreshToken == "" {
+				continue
+			}
+			if c.ExpiresAt.IsZero() {
+				continue
+			}
+			// Refresh 5 minutes before expiry
+			if time.Until(c.ExpiresAt) < 5*time.Minute {
+				needsRefresh = append(needsRefresh, c)
+			}
+		}
+		p.mu.Unlock()
+
+		for _, c := range needsRefresh {
+			slog.Info("pre-refreshing token", "label", c.Label, "expires_in", time.Until(c.ExpiresAt))
+			if err := p.refresh(c); err != nil {
+				slog.Warn("background refresh failed", "label", c.Label, "error", err)
+			}
+		}
 	}
 }
 

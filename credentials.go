@@ -278,8 +278,7 @@ func RefreshClaudeOAuth(refreshToken string) (accessToken, newRefresh string, ex
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := APIClient.Do(req)
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("refresh request: %w", err)
 	}

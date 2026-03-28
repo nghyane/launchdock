@@ -102,7 +102,6 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 
 // sendWithRetry sends the upstream request, retrying with a different credential on retryable errors.
 func sendWithRetry(r *http.Request, provider Provider, pool *Pool, cred *Credential, model string, body []byte, urlPath string) (*http.Response, *Credential, error) {
-	client := &http.Client{Timeout: 5 * time.Minute}
 	maxRetries := 2
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -118,7 +117,7 @@ func sendWithRetry(r *http.Request, provider Provider, pool *Pool, cred *Credent
 			provider.Prepare(upReq, cred)
 		}
 
-		resp, err := client.Do(upReq)
+		resp, err := StreamClient.Do(upReq)
 		if err != nil {
 			return nil, cred, err
 		}
@@ -434,8 +433,7 @@ func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *
 	}
 	openai.Prepare(upReq, cred)
 
-	client := &http.Client{Timeout: 10 * time.Minute}
-	upResp, err := client.Do(upReq)
+	upResp, err := StreamClient.Do(upReq)
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
 		return
