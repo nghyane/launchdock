@@ -46,19 +46,6 @@ func LoadCredentialViews() []CredentialView {
 		views = append(views, managedCredentialView(cc))
 	}
 
-	for _, src := range []struct {
-		key      string
-		provider string
-	}{
-		{"ANTHROPIC_API_KEY", "anthropic"},
-		{"OPENAI_API_KEY", "openai"},
-		{"GEMINI_API_KEY", "gemini"},
-	} {
-		if cred, err := LoadFromEnv(src.key, src.provider); err == nil {
-			views = append(views, externalCredentialView(*cred, "env"))
-		}
-	}
-
 	sort.SliceStable(views, func(i, j int) bool {
 		if views[i].Managed != views[j].Managed {
 			return views[i].Managed

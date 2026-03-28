@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
@@ -69,12 +70,16 @@ func handleAuthInteractive() {
 			views = LoadCredentialViews()
 		case 'a':
 			oldState = suspendAuthRaw(fd, oldState, func() {
-				provider := runPicker("Add credential:", []string{"Claude", "OpenAI"})
+				provider := runPicker("Add credential:", []string{"Claude", "OpenAI", "Anthropic API key", "OpenAI API key"})
 				switch provider {
 				case 0:
 					_, _ = RunOAuthFlow("Claude Account")
 				case 1:
 					_, _ = RunOpenAIOAuthFlow("OpenAI Account")
+				case 2:
+					addManagedAPIKeyInteractive("anthropic")
+				case 3:
+					addManagedAPIKeyInteractive("openai")
 				}
 			})
 			views = LoadCredentialViews()
@@ -180,6 +185,25 @@ func authRowSummary(v CredentialView) string {
 		return "managed by launchdock"
 	}
 	return authSourceLabel(v)
+}
+
+func addManagedAPIKeyInteractive(provider string) {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Enter %s API key: ", providerDisplayName(provider))
+	key, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Read failed: %v\n", err)
+		return
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		fmt.Fprintln(os.Stderr, "API key is empty")
+		return
+	}
+	label := providerDisplayName(provider) + " API key"
+	if err := saveAPIKeyToConfig(provider, label, key); err != nil {
+		fmt.Fprintf(os.Stderr, "Save failed: %v\n", err)
+	}
 }
 
 func truncate(s string, max int) string {

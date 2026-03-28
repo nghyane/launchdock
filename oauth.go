@@ -361,6 +361,23 @@ func saveCredentialToConfig(cred *Credential) error {
 	return saveConfig(cfg)
 }
 
+func saveAPIKeyToConfig(provider, label, apiKey string) error {
+	if strings.TrimSpace(apiKey) == "" {
+		return fmt.Errorf("api key is empty")
+	}
+	if label == "" {
+		label = strings.ToUpper(provider) + " API key"
+	}
+	cfg := loadConfig()
+	cfg.Credentials = append(cfg.Credentials, ConfigCredential{
+		ID:       generateCredentialID(),
+		Label:    label,
+		Provider: provider,
+		APIKey:   apiKey,
+	})
+	return saveConfig(cfg)
+}
+
 func generateCredentialID() string {
 	return "cred_" + generateState()
 }

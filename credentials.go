@@ -236,22 +236,6 @@ func LoadFromFile(path string) ([]Credential, error) {
 	}}, nil
 }
 
-// --- Load from environment variable ---
-
-func LoadFromEnv(envKey, provider string) (*Credential, error) {
-	val := os.Getenv(envKey)
-	if val == "" {
-		return nil, fmt.Errorf("env %s not set", envKey)
-	}
-	return &Credential{
-		Provider: provider,
-		AuthType: AuthAPIKey,
-		Label:    envKey,
-		Source:   "env:" + envKey,
-		APIKey:   val,
-	}, nil
-}
-
 // --- Refresh ---
 
 const (
@@ -429,21 +413,6 @@ func LoadAllCredentials() []Credential {
 	// 3. Config file credentials (multi-account)
 	configCreds := LoadFromConfig()
 	all = append(all, configCreds...)
-
-	// 4. Environment variables
-	envSources := []struct {
-		key      string
-		provider string
-	}{
-		{"ANTHROPIC_API_KEY", "anthropic"},
-		{"OPENAI_API_KEY", "openai"},
-		{"GEMINI_API_KEY", "gemini"},
-	}
-	for _, src := range envSources {
-		if cred, err := LoadFromEnv(src.key, src.provider); err == nil {
-			all = append(all, *cred)
-		}
-	}
 
 	return all
 }
