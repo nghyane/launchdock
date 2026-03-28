@@ -371,7 +371,6 @@ func verifyChecksum(archivePath, checksumPath string) error {
 	return nil
 }
 
-
 func nowRFC3339() string {
 	return nowFunc().UTC().Format("2006-01-02T15:04:05Z07:00")
 }
