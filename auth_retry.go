@@ -47,9 +47,13 @@ func authFailureMessage(provider string, body []byte) string {
 				Code    string `json:"code"`
 				Type    string `json:"type"`
 			} `json:"error"`
+			Detail struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"detail"`
 		}
 		if json.Unmarshal(body, &payload) == nil {
-			return strings.TrimSpace(payload.Error.Message + " " + payload.Error.Code + " " + payload.Error.Type)
+			return strings.TrimSpace(payload.Error.Message + " " + payload.Error.Code + " " + payload.Error.Type + " " + payload.Detail.Code + " " + payload.Detail.Message)
 		}
 	case "anthropic":
 		var payload struct {

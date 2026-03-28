@@ -56,7 +56,26 @@ func LoadCredentialViews() []CredentialView {
 		return views[i].Label < views[j].Label
 	})
 
+	enrichViewEmails(views)
+
 	return views
+}
+
+func enrichViewEmails(views []CredentialView) {
+	byAccount := map[string]string{}
+	for _, v := range views {
+		if v.AccountID != "" && v.Email != "" {
+			byAccount[v.Provider+":"+v.AccountID] = v.Email
+		}
+	}
+	for i := range views {
+		if views[i].Email != "" || views[i].AccountID == "" {
+			continue
+		}
+		if email := byAccount[views[i].Provider+":"+views[i].AccountID]; email != "" {
+			views[i].Email = email
+		}
+	}
 }
 
 func externalCredentialView(cred Credential, sourceKind string) CredentialView {
