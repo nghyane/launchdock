@@ -46,8 +46,8 @@ launchdock launch opencode
 ## Personal server
 
 ```bash
-launchdock auth push my-vps
-ssh my-vps '$HOME/.local/bin/launchdock start'
+launchdock auth push user@server.example.com
+ssh user@server.example.com '$HOME/.local/bin/launchdock start'
 ```
 
 `auth push` installs or updates `launchdock` on the remote host automatically, then imports your managed credentials.

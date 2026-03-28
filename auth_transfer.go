@@ -243,10 +243,6 @@ func handleUpdateCommand() {
 		fmt.Fprintln(os.Stderr, "Update is not supported automatically on Windows yet.")
 		os.Exit(1)
 	}
-	if !runConfirm("Update launchdock to " + version + "?") {
-		fmt.Println("Aborted.")
-		return
-	}
 	if err := installLocalLaunchdock(version); err != nil {
 		fmt.Fprintf(os.Stderr, "Update failed: %v\n", err)
 		os.Exit(1)
