@@ -49,15 +49,17 @@ func main() {
 
 	// Setup providers
 	anthropicProvider := &AnthropicProvider{}
+	openaiProvider := &OpenAIProvider{}
 	providers := []Provider{
 		anthropicProvider,
-		&OpenAIProvider{},
+		openaiProvider,
 	}
 
 	// Routes
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/chat/completions", HandleChatCompletions(pool, providers))
 	mux.HandleFunc("/v1/messages", HandleMessages(pool, anthropicProvider))
+	mux.HandleFunc("/v1/responses", HandleResponses(pool, openaiProvider))
 	mux.HandleFunc("/v1/models", HandleModels(pool, anthropicProvider))
 	mux.HandleFunc("/health", HandleHealth(pool))
 	mux.HandleFunc("/", HandleHealth(pool))

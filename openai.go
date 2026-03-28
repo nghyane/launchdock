@@ -19,7 +19,15 @@ func (p *OpenAIProvider) Match(model string) bool {
 }
 
 func (p *OpenAIProvider) ProviderName() string { return "openai" }
-func (p *OpenAIProvider) BaseURL() string      { return "https://api.openai.com" }
+
+// BaseURL returns the API base URL.
+// For OAuth (ChatGPT) auth, Codex uses chatgpt.com/backend-api/codex, not api.openai.com.
+func (p *OpenAIProvider) BaseURL() string { return "https://api.openai.com" }
+
+// ChatGPTBaseURL returns the ChatGPT backend URL used by Codex OAuth.
+func (p *OpenAIProvider) ChatGPTBaseURL() string {
+	return "https://chatgpt.com/backend-api/codex"
+}
 
 func (p *OpenAIProvider) Prepare(req *http.Request, cred *Credential) {
 	switch cred.AuthType {
