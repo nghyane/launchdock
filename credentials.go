@@ -37,6 +37,7 @@ type Credential struct {
 	AccessToken  string
 	RefreshToken string
 	AccountID    string // chatgpt-account-id for OpenAI OAuth
+	Email        string
 	ExpiresAt    time.Time
 
 	// API key field
@@ -230,6 +231,7 @@ func LoadFromFile(path string) ([]Credential, error) {
 		AccessToken:  auth.Tokens.AccessToken,
 		RefreshToken: auth.Tokens.RefreshToken,
 		AccountID:    auth.Tokens.AccountID,
+		Email:        extractOpenAIEmail(auth.Tokens.IDToken),
 		ExpiresAt:    expiresAt,
 	}}, nil
 }

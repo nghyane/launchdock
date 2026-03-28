@@ -281,6 +281,7 @@ func exchangeOpenAICodeForTokens(code, verifier, redirectURI, label string) (*Cr
 		return nil, fmt.Errorf("parse response: %w", err)
 	}
 	accountID := extractOpenAIAccountID(result.IDToken)
+	email := extractOpenAIEmail(result.IDToken)
 	return &Credential{
 		Provider:     "openai",
 		AuthType:     AuthOAuth,
@@ -289,6 +290,7 @@ func exchangeOpenAICodeForTokens(code, verifier, redirectURI, label string) (*Cr
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
 		AccountID:    accountID,
+		Email:        email,
 		ExpiresAt:    time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
 	}, nil
 }
@@ -307,6 +309,7 @@ type ConfigCredential struct {
 	RefreshToken string `json:"refresh_token,omitempty"`
 	APIKey       string `json:"api_key,omitempty"`
 	AccountID    string `json:"account_id,omitempty"`
+	Email        string `json:"email,omitempty"`
 	Disabled     bool   `json:"disabled,omitempty"`
 }
 
@@ -353,6 +356,7 @@ func saveCredentialToConfig(cred *Credential) error {
 		RefreshToken: cred.RefreshToken,
 		APIKey:       cred.APIKey,
 		AccountID:    cred.AccountID,
+		Email:        cred.Email,
 	})
 	return saveConfig(cfg)
 }
@@ -390,7 +394,7 @@ func toggleConfigCredentialDisabled(id string) error {
 	return fmt.Errorf("credential not found")
 }
 
-func persistManagedCredentialState(id, refreshToken, accountID string) error {
+func persistManagedCredentialState(id, refreshToken, accountID, email string) error {
 	cfg := loadConfig()
 	for i := range cfg.Credentials {
 		if cfg.Credentials[i].ID != id {
@@ -401,6 +405,9 @@ func persistManagedCredentialState(id, refreshToken, accountID string) error {
 		}
 		if accountID != "" {
 			cfg.Credentials[i].AccountID = accountID
+		}
+		if email != "" {
+			cfg.Credentials[i].Email = email
 		}
 		return saveConfig(cfg)
 	}
@@ -423,6 +430,7 @@ func LoadFromConfig() []Credential {
 				Label:    cc.Label,
 				Source:   "config:" + configPath(),
 				Managed:  true,
+				Email:    cc.Email,
 				APIKey:   cc.APIKey,
 			})
 		} else if cc.RefreshToken != "" {
@@ -449,6 +457,7 @@ func LoadFromConfig() []Credential {
 					Managed:      true,
 					RefreshToken: cc.RefreshToken,
 					AccountID:    cc.AccountID,
+					Email:        cc.Email,
 				})
 			} else {
 				creds = append(creds, Credential{
@@ -461,6 +470,7 @@ func LoadFromConfig() []Credential {
 					AccessToken:  at,
 					RefreshToken: rt,
 					AccountID:    cc.AccountID,
+					Email:        cc.Email,
 					ExpiresAt:    exp,
 				})
 			}
@@ -523,4 +533,22 @@ func extractOpenAIAccountID(idToken string) string {
 		return v
 	}
 	return ""
+}
+
+func extractOpenAIEmail(idToken string) string {
+	parts := strings.Split(idToken, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return ""
+	}
+	return claims.Email
 }

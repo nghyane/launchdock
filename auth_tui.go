@@ -128,12 +128,15 @@ func renderAuthManager(views []CredentialView, cursor int) {
 		if i == cursor {
 			prefix = fmt.Sprintf("%s❯%s ", ansiCyan, ansiReset)
 		}
-		fmt.Printf("%s%-18s %s%-9s%s %s\n", prefix, truncate(v.Label, 18), authStatusColor(v), authStatusLabel(v), ansiReset, truncate(authRowSummary(v), 54))
+		fmt.Printf("%s%-24s %s%-9s%s %s\n", prefix, truncate(authDisplayName(v), 24), authStatusColor(v), authStatusLabel(v), ansiReset, truncate(authRowSummary(v), 48))
 	}
 
 	v := views[cursor]
 	fmt.Printf("\n%sDetails%s\n", ansiBold, ansiReset)
 	fmt.Printf("  Label:    %s\n", v.Label)
+	if v.Email != "" {
+		fmt.Printf("  Email:    %s\n", v.Email)
+	}
 	fmt.Printf("  Provider: %s\n", authProviderLabel(v.Provider))
 	fmt.Printf("  Type:     %s\n", v.AuthType)
 	fmt.Printf("  Source:   %s\n", v.Source)
@@ -176,7 +179,7 @@ func authRowSummary(v CredentialView) string {
 	if v.Managed {
 		return "managed by launchdock"
 	}
-	return v.Source
+	return authSourceLabel(v)
 }
 
 func truncate(s string, max int) string {

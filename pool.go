@@ -181,7 +181,7 @@ func (p *Pool) refresh(c *Credential) error {
 		c.ExpiresAt = exp
 		p.mu.Unlock()
 		if managed && managedID != "" {
-			if err := persistManagedCredentialState(managedID, rt, c.AccountID); err != nil {
+			if err := persistManagedCredentialState(managedID, rt, c.AccountID, c.Email); err != nil {
 				slog.Warn("persist managed OpenAI token failed", "label", label, "error", err)
 			}
 		}
@@ -207,7 +207,7 @@ func (p *Pool) refresh(c *Credential) error {
 			c.ExpiresAt = creds[0].ExpiresAt
 			p.mu.Unlock()
 			if managed && managedID != "" {
-				if err := persistManagedCredentialState(managedID, creds[0].RefreshToken, c.AccountID); err != nil {
+				if err := persistManagedCredentialState(managedID, creds[0].RefreshToken, c.AccountID, c.Email); err != nil {
 					slog.Warn("persist managed Claude token failed", "label", label, "error", err)
 				}
 			}
@@ -220,7 +220,7 @@ func (p *Pool) refresh(c *Credential) error {
 		c.ExpiresAt = exp
 		p.mu.Unlock()
 		if managed && managedID != "" {
-			if err := persistManagedCredentialState(managedID, rt, c.AccountID); err != nil {
+			if err := persistManagedCredentialState(managedID, rt, c.AccountID, c.Email); err != nil {
 				slog.Warn("persist managed Claude token failed", "label", label, "error", err)
 			}
 		}
