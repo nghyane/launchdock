@@ -1,0 +1,92 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive: zip
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          ext=""
+          if [ "$GOOS" = "windows" ]; then
+            ext=".exe"
+          fi
+          bin="launchdock${ext}"
+          version="${{ github.event.release.tag_name || github.ref_name }}"
+          go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "dist/${bin}" .
+
+      - name: Package archive
+        run: |
+          version="${{ github.event.release.tag_name || github.ref_name }}"
+          name="launchdock-${version}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p package
+          cp README.md package/
+          cp LICENSE* package/ 2>/dev/null || true
+          cp dist/* package/
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            cd package && zip -r "../${name}.zip" .
+          else
+            tar -C package -czf "${name}.tar.gz" .
+          fi
+
+      - name: Generate checksums
+        run: sha256sum *.tar.gz *.zip 2>/dev/null > checksums-${{ matrix.goos }}-${{ matrix.goarch }}.txt || true
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.tar.gz
+            *.zip
+            checksums-*.txt
+
+      - name: Upload workflow artifact
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: launchdock-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            *.tar.gz
+            *.zip
+            checksums-*.txt

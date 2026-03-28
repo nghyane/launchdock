@@ -9,6 +9,10 @@ import (
 
 func handleAuthCommand() {
 	if len(os.Args) < 3 {
+		if isTerminal(int(os.Stdin.Fd())) {
+			handleAuthInteractive()
+			return
+		}
 		printAuthHelp()
 		os.Exit(1)
 	}
@@ -16,8 +20,16 @@ func handleAuthCommand() {
 	switch os.Args[2] {
 	case "list":
 		handleAuthList()
+	case "export":
+		handleAuthExport()
+	case "import":
+		handleAuthImport()
 	case "login":
 		handleAuthLogin()
+	case "push":
+		handleAuthPush()
+	case "remove":
+		handleAuthRemove()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown auth command: %s\n\n", os.Args[2])
 		printAuthHelp()
@@ -25,21 +37,27 @@ func handleAuthCommand() {
 	}
 }
 
+func handleAuthRemove() {
+	if len(os.Args) < 4 {
+		fmt.Fprintln(os.Stderr, "Usage: launchdock auth remove <credential-id>")
+		os.Exit(1)
+	}
+	id := os.Args[3]
+	if err := removeConfigCredential(id); err != nil {
+		fmt.Fprintf(os.Stderr, "Remove failed: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Removed managed credential: %s\n", id)
+}
+
 func handleAuthList() {
-	creds := LoadAllCredentials()
-	if len(creds) == 0 {
+	views := LoadCredentialViews()
+	if len(views) == 0 {
 		fmt.Println("No credentials found.")
 		return
 	}
-	for i, c := range creds {
-		status := "ok"
-		if c.IsExpired() {
-			status = "expired"
-		}
-		if c.AuthType == AuthOAuth && c.RefreshToken != "" {
-			status += " (auto-refresh)"
-		}
-		fmt.Printf("%d. [%s] %s (%s/%s) — %s\n", i+1, status, c.Label, c.Provider, c.AuthType, c.Source)
+	for i, v := range views {
+		fmt.Println(authListLine(i, v))
 	}
 }
 
@@ -89,9 +107,14 @@ func handleOpenAILogin() {
 
 func printAuthHelp() {
 	fmt.Fprint(os.Stderr, `Usage:
+  launchdock auth                          Interactive credential manager
   launchdock auth list
+  launchdock auth export [credential-id ...]
+  launchdock auth import
   launchdock auth login claude [label]
   launchdock auth login openai
+  launchdock auth push <ssh-target> [credential-id ...]
+  launchdock auth remove <credential-id>
 
 `)
 }

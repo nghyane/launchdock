@@ -12,6 +12,8 @@ import (
 	"time"
 )
 
+var version = "dev"
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
@@ -37,6 +39,12 @@ func main() {
 			return
 		case "restart":
 			handleRestartCommand()
+			return
+		case "update":
+			handleUpdateCommand()
+			return
+		case "version":
+			handleVersionCommand()
 			return
 		}
 	}

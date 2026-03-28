@@ -301,11 +301,13 @@ type Config struct {
 }
 
 type ConfigCredential struct {
+	ID           string `json:"id,omitempty"`
 	Label        string `json:"label"`
 	Provider     string `json:"provider"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	APIKey       string `json:"api_key,omitempty"`
 	AccountID    string `json:"account_id,omitempty"`
+	Disabled     bool   `json:"disabled,omitempty"`
 }
 
 func configPath() string {
@@ -321,6 +323,11 @@ func loadConfig() *Config {
 	var cfg Config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return &Config{AutoDiscover: true}
+	}
+	for i := range cfg.Credentials {
+		if cfg.Credentials[i].ID == "" {
+			cfg.Credentials[i].ID = generateCredentialID()
+		}
 	}
 	return &cfg
 }
@@ -340,12 +347,47 @@ func saveConfig(cfg *Config) error {
 func saveCredentialToConfig(cred *Credential) error {
 	cfg := loadConfig()
 	cfg.Credentials = append(cfg.Credentials, ConfigCredential{
+		ID:           generateCredentialID(),
 		Label:        cred.Label,
 		Provider:     cred.Provider,
 		RefreshToken: cred.RefreshToken,
+		APIKey:       cred.APIKey,
 		AccountID:    cred.AccountID,
 	})
 	return saveConfig(cfg)
+}
+
+func generateCredentialID() string {
+	return "cred_" + generateState()
+}
+
+func removeConfigCredential(id string) error {
+	cfg := loadConfig()
+	var filtered []ConfigCredential
+	removed := false
+	for _, cc := range cfg.Credentials {
+		if cc.ID == id {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, cc)
+	}
+	if !removed {
+		return fmt.Errorf("credential not found")
+	}
+	cfg.Credentials = filtered
+	return saveConfig(cfg)
+}
+
+func toggleConfigCredentialDisabled(id string) error {
+	cfg := loadConfig()
+	for i := range cfg.Credentials {
+		if cfg.Credentials[i].ID == id {
+			cfg.Credentials[i].Disabled = !cfg.Credentials[i].Disabled
+			return saveConfig(cfg)
+		}
+	}
+	return fmt.Errorf("credential not found")
 }
 
 // LoadFromConfig loads credentials from ~/.config/launchdock/config.json
@@ -353,6 +395,9 @@ func LoadFromConfig() []Credential {
 	cfg := loadConfig()
 	var creds []Credential
 	for _, cc := range cfg.Credentials {
+		if cc.Disabled {
+			continue
+		}
 		if cc.APIKey != "" {
 			creds = append(creds, Credential{
 				Provider: cc.Provider,

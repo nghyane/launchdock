@@ -34,6 +34,9 @@ launchdock auth login openai
 # inspect discovered credentials
 launchdock auth list
 
+# push managed credentials to a personal server
+launchdock auth push my-vps
+
 # launch tools
 launchdock launch claude-code
 launchdock launch codex
@@ -69,8 +72,12 @@ launchdock launch opencode
 
 ```bash
 launchdock auth list
+launchdock auth export [credential-id ...]
+launchdock auth import
 launchdock auth login claude [label]
 launchdock auth login openai
+launchdock auth push <ssh-target> [credential-id ...]
+launchdock auth remove <credential-id>
 
 launchdock launch
 launchdock launch <tool>
@@ -82,6 +89,8 @@ launchdock ps
 launchdock logs
 launchdock restart
 launchdock stop
+launchdock update
+launchdock version
 ```
 
 ## How It Works
