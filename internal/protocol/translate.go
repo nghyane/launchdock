@@ -1,4 +1,4 @@
-package launchdock
+package protocol
 
 import (
 	"encoding/json"
@@ -203,6 +203,10 @@ func claudeStopToChat(reason *string) string {
 	default:
 		return "stop"
 	}
+}
+
+func ClaudeStopToChat(reason *string) string {
+	return claudeStopToChat(reason)
 }
 
 // --- Helpers ---

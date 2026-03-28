@@ -1,4 +1,4 @@
-package launchdock
+package protocol
 
 import "encoding/json"
 

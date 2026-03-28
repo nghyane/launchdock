@@ -277,7 +277,7 @@ func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Cr
 			var md ClaudeMessageDelta
 			json.Unmarshal([]byte(data), &md)
 
-			finishReason := claudeStopToChat(md.Delta.StopReason)
+			finishReason := ClaudeStopToChat(md.Delta.StopReason)
 			chunk := ChatStreamChunk{
 				ID: chatID, Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: model,
 				Choices: []ChatChoice{{
