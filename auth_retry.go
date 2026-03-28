@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,9 +15,18 @@ func isAuthFailure(provider string, statusCode int, body []byte) bool {
 	if statusCode != http.StatusUnauthorized && statusCode != http.StatusForbidden {
 		return false
 	}
-	msg := strings.ToLower(string(body))
+	msg := strings.ToLower(authFailureMessage(provider, body))
 	switch provider {
-	case "anthropic", "openai":
+	case "anthropic":
+		return strings.Contains(msg, "authentication") ||
+			strings.Contains(msg, "api key") ||
+			strings.Contains(msg, "oauth") ||
+			strings.Contains(msg, "token") ||
+			strings.Contains(msg, "unauthorized") ||
+			strings.Contains(msg, "forbidden") ||
+			strings.Contains(msg, "expired") ||
+			strings.Contains(msg, "invalid")
+	case "openai":
 		return strings.Contains(msg, "auth") ||
 			strings.Contains(msg, "token") ||
 			strings.Contains(msg, "unauthorized") ||
@@ -26,6 +36,33 @@ func isAuthFailure(provider string, statusCode int, body []byte) bool {
 	default:
 		return statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden
 	}
+}
+
+func authFailureMessage(provider string, body []byte) string {
+	switch provider {
+	case "openai":
+		var payload struct {
+			Error struct {
+				Message string `json:"message"`
+				Code    string `json:"code"`
+				Type    string `json:"type"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &payload) == nil {
+			return strings.TrimSpace(payload.Error.Message + " " + payload.Error.Code + " " + payload.Error.Type)
+		}
+	case "anthropic":
+		var payload struct {
+			Error struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(body, &payload) == nil {
+			return strings.TrimSpace(payload.Error.Message + " " + payload.Error.Type)
+		}
+	}
+	return string(body)
 }
 
 func doWithCredentialRetry(pool *Pool, providerName string, cred *Credential, attempt func(*Credential) (*http.Response, error)) (*http.Response, *Credential, error) {

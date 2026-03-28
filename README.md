@@ -25,8 +25,8 @@ launchdock version
 Optional:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | LAUNCHDOCK_VERSION=v0.1.1 sh
-curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | INSTALL_DIR=/usr/local/bin sh
+curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | env LAUNCHDOCK_VERSION=v0.1.1 sh
+curl -fsSL https://raw.githubusercontent.com/nghyane/launchdock/main/install.sh | env INSTALL_DIR=/usr/local/bin sh
 ```
 
 The installer downloads the right GitHub Release, verifies its checksum, and installs `launchdock` into `~/.local/bin` by default.

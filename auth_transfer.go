@@ -100,6 +100,13 @@ func mergeImportedCredentials(imported []ConfigCredential) (int, error) {
 }
 
 func handleAuthExport() {
+	if isTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintln(os.Stderr, "Refusing to print credential export to an interactive terminal.")
+		fmt.Fprintln(os.Stderr, "Pipe it to a file or another command, for example:")
+		fmt.Fprintln(os.Stderr, "  launchdock auth export > launchdock-auth.json")
+		fmt.Fprintln(os.Stderr, "  launchdock auth push user@server.example.com")
+		os.Exit(1)
+	}
 	data, err := exportManagedCredentials(os.Args[3:])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Export failed: %v\n", err)
@@ -175,13 +182,31 @@ NAME="launchdock-%s-${OS}-${ARCH}"
 URL="https://github.com/nghyane/launchdock/releases/download/%s/${NAME}.tar.gz"
 CHECKSUM_URL="https://github.com/nghyane/launchdock/releases/download/%s/checksums-${OS}-${ARCH}.txt"
 mkdir -p "$HOME/.local/bin" "$HOME/.cache/launchdock"
-curl -fsSL "$URL" -o "$HOME/.cache/launchdock/launchdock.tgz"
+command -v curl >/dev/null 2>&1 || { echo "missing required command: curl" >&2; exit 1; }
+command -v tar >/dev/null 2>&1 || { echo "missing required command: tar" >&2; exit 1; }
+command -v install >/dev/null 2>&1 || { echo "missing required command: install" >&2; exit 1; }
+ARCHIVE_PATH="$HOME/.cache/launchdock/${NAME}.tar.gz"
+ASSET_NAME="${NAME}.tar.gz"
+curl -fsSL "$URL" -o "$ARCHIVE_PATH"
 curl -fsSL "$CHECKSUM_URL" -o "$HOME/.cache/launchdock/checksums.txt"
 cd "$HOME/.cache/launchdock"
-sha256sum -c checksums.txt --ignore-missing
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum -c checksums.txt --ignore-missing
+elif command -v shasum >/dev/null 2>&1; then
+  EXPECTED=$(awk -v asset="$ASSET_NAME" '$2 == asset {print $1}' checksums.txt)
+  ACTUAL=$(shasum -a 256 "$ARCHIVE_PATH" | awk '{print $1}')
+  [ "$EXPECTED" = "$ACTUAL" ] || { echo "checksum mismatch" >&2; exit 1; }
+elif command -v openssl >/dev/null 2>&1; then
+  EXPECTED=$(awk -v asset="$ASSET_NAME" '$2 == asset {print $1}' checksums.txt)
+  ACTUAL=$(openssl dgst -sha256 "$ARCHIVE_PATH" | awk '{print $NF}')
+  [ "$EXPECTED" = "$ACTUAL" ] || { echo "checksum mismatch" >&2; exit 1; }
+else
+  echo "missing checksum tool: sha256sum, shasum, or openssl" >&2
+  exit 1
+fi
 rm -rf "$HOME/.cache/launchdock/unpack"
 mkdir -p "$HOME/.cache/launchdock/unpack"
-tar -xzf "$HOME/.cache/launchdock/launchdock.tgz" -C "$HOME/.cache/launchdock/unpack"
+tar -xzf "$ARCHIVE_PATH" -C "$HOME/.cache/launchdock/unpack"
 install "$HOME/.cache/launchdock/unpack/launchdock" "$HOME/.local/bin/launchdock"
 $HOME/.local/bin/launchdock version >/dev/null
 `, version, version, version)
@@ -204,11 +229,20 @@ func currentVersion() string {
 }
 
 func latestReleaseVersion() string {
-	resp, err := http.Get("https://api.github.com/repos/nghyane/launchdock/releases/latest")
+	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/nghyane/launchdock/releases/latest", nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("User-Agent", "launchdock/"+currentVersion())
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := APIClient.Do(req)
 	if err != nil {
 		return ""
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
 	var result struct {
 		TagName string `json:"tag_name"`
 	}
@@ -310,13 +344,19 @@ func releaseAssetName(version, goos, goarch string) string {
 }
 
 func downloadFile(url, path string) error {
-	resp, err := http.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "launchdock/"+currentVersion())
+	resp, err := APIClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("download failed: %s", resp.Status)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("download failed: %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	f, err := os.Create(path)
 	if err != nil {
