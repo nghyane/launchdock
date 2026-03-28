@@ -155,10 +155,15 @@ func anthropicFallbackModels() []map[string]any {
 }
 
 func openAIModels() []map[string]any {
+	// Bundled from Codex CLI models.json — Codex OAuth lacks api.model.read scope
 	var models []map[string]any
 	for _, m := range []string{
+		"gpt-5.4",
+		"gpt-5.4-mini",
+		"gpt-5.3-codex",
 		"gpt-4o",
 		"gpt-4o-mini",
+		"o3",
 		"o3-mini",
 		"o4-mini",
 	} {
