@@ -194,14 +194,19 @@ func ensureOAuthRequirements(body []byte) ([]byte, error) {
 
 	if !hasIdentity {
 		// Prepend identity as first system block (array format like Claude Code does)
+		// Add cache_control on system prompt for prompt caching
 		existing := req["system"]
-		var systemBlocks []map[string]string
-		systemBlocks = append(systemBlocks, map[string]string{"type": "text", "text": identity})
+		var systemBlocks []map[string]any
+		systemBlocks = append(systemBlocks, map[string]any{
+			"type":          "text",
+			"text":          identity,
+			"cache_control": map[string]string{"type": "ephemeral"},
+		})
 
 		switch s := existing.(type) {
 		case string:
 			if s != "" {
-				systemBlocks = append(systemBlocks, map[string]string{"type": "text", "text": s})
+				systemBlocks = append(systemBlocks, map[string]any{"type": "text", "text": s})
 			}
 		case []any:
 			for _, item := range s {
@@ -211,11 +216,38 @@ func ensureOAuthRequirements(body []byte) ([]byte, error) {
 					if typ == "" {
 						typ = "text"
 					}
-					systemBlocks = append(systemBlocks, map[string]string{"type": typ, "text": text})
+					systemBlocks = append(systemBlocks, map[string]any{"type": typ, "text": text})
 				}
 			}
 		}
 		req["system"] = systemBlocks
+	}
+
+	// Add cache_control on last user message for prompt caching
+	if msgs, ok := req["messages"].([]any); ok && len(msgs) > 0 {
+		// Find last user message
+		for i := len(msgs) - 1; i >= 0; i-- {
+			msg, ok := msgs[i].(map[string]any)
+			if !ok || msg["role"] != "user" {
+				continue
+			}
+			// Add cache_control to last content block of last user message
+			switch c := msg["content"].(type) {
+			case string:
+				msg["content"] = []map[string]any{{
+					"type":          "text",
+					"text":          c,
+					"cache_control": map[string]string{"type": "ephemeral"},
+				}}
+			case []any:
+				if len(c) > 0 {
+					if last, ok := c[len(c)-1].(map[string]any); ok {
+						last["cache_control"] = map[string]string{"type": "ephemeral"}
+					}
+				}
+			}
+			break
+		}
 	}
 
 	// Ensure at least one tool exists (OAuth requires tools)
