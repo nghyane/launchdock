@@ -176,9 +176,15 @@ func ClaudeToChat(cr *ClaudeResponse, model string) *ChatResponse {
 			FinishReason: &finishReason,
 		}},
 		Usage: &ChatUsage{
-			PromptTokens:     cr.Usage.InputTokens,
+			PromptTokens:     cr.Usage.InputTokens + cr.Usage.CacheReadInputTokens + cr.Usage.CacheCreationInputTokens,
 			CompletionTokens: cr.Usage.OutputTokens,
-			TotalTokens:      cr.Usage.InputTokens + cr.Usage.OutputTokens,
+			TotalTokens:      cr.Usage.InputTokens + cr.Usage.CacheReadInputTokens + cr.Usage.CacheCreationInputTokens + cr.Usage.OutputTokens,
+			PromptTokensDetails: func() *PromptTokensDetails {
+				if cr.Usage.CacheReadInputTokens > 0 {
+					return &PromptTokensDetails{CachedTokens: cr.Usage.CacheReadInputTokens}
+				}
+				return nil
+			}(),
 		},
 	}
 }
