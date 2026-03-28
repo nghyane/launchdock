@@ -2,7 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -21,48 +23,151 @@ func HandleHealth(pool *Pool) http.HandlerFunc {
 	}
 }
 
-func HandleModels(pool *Pool) http.HandlerFunc {
+// --- Models cache ---
+
+var (
+	modelCache     []map[string]any
+	modelCacheMu   sync.RWMutex
+	modelCacheTime time.Time
+	modelCacheTTL  = 10 * time.Minute
+)
+
+func HandleModels(pool *Pool, anthropic *AnthropicProvider) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Return commonly used models based on available credentials
-		var models []map[string]any
-
-		if pool.Count("anthropic") > 0 {
-			for _, m := range []string{
-				"claude-opus-4-20250514",
-				"claude-opus-4-1-20250805",
-				"claude-sonnet-4-20250514",
-				"claude-sonnet-4-1-20250514",
-				"claude-haiku-3-5-20241022",
-			} {
-				models = append(models, map[string]any{
-					"id":       m,
-					"object":   "model",
-					"created":  time.Now().Unix(),
-					"owned_by": "anthropic",
-				})
-			}
-		}
-
-		if pool.Count("openai") > 0 {
-			for _, m := range []string{
-				"gpt-4o",
-				"gpt-4o-mini",
-				"o3-mini",
-				"o4-mini",
-			} {
-				models = append(models, map[string]any{
-					"id":       m,
-					"object":   "model",
-					"created":  time.Now().Unix(),
-					"owned_by": "openai",
-				})
-			}
-		}
-
+		models := getCachedModels(pool, anthropic)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{
 			"object": "list",
 			"data":   models,
 		})
 	}
+}
+
+func getCachedModels(pool *Pool, anthropic *AnthropicProvider) []map[string]any {
+	modelCacheMu.RLock()
+	if modelCache != nil && time.Since(modelCacheTime) < modelCacheTTL {
+		defer modelCacheMu.RUnlock()
+		return modelCache
+	}
+	modelCacheMu.RUnlock()
+
+	models := fetchAllModels(pool, anthropic)
+
+	modelCacheMu.Lock()
+	modelCache = models
+	modelCacheTime = time.Now()
+	modelCacheMu.Unlock()
+
+	return models
+}
+
+func fetchAllModels(pool *Pool, anthropic *AnthropicProvider) []map[string]any {
+	var models []map[string]any
+
+	// Anthropic — fetch from API
+	if pool.Count("anthropic") > 0 {
+		apiModels := fetchAnthropicModels(pool, anthropic)
+		if len(apiModels) > 0 {
+			models = append(models, apiModels...)
+		} else {
+			// Fallback to hardcoded if API fails
+			models = append(models, anthropicFallbackModels()...)
+		}
+	}
+
+	// OpenAI — hardcoded (Codex OAuth lacks api.model.read scope)
+	if pool.Count("openai") > 0 {
+		models = append(models, openAIModels()...)
+	}
+
+	return models
+}
+
+func fetchAnthropicModels(pool *Pool, provider *AnthropicProvider) []map[string]any {
+	cred, err := pool.Pick("anthropic")
+	if err != nil {
+		slog.Debug("no anthropic credential for models fetch", "error", err)
+		return nil
+	}
+
+	req, err := http.NewRequest("GET", provider.BaseURL()+"/v1/models", nil)
+	if err != nil {
+		return nil
+	}
+	provider.PrepareWithModel(req, cred, "")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		slog.Debug("anthropic models fetch failed", "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		slog.Debug("anthropic models fetch non-200", "status", resp.StatusCode)
+		return nil
+	}
+
+	var result struct {
+		Data []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+			CreatedAt   string `json:"created_at"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		slog.Debug("anthropic models parse failed", "error", err)
+		return nil
+	}
+
+	var models []map[string]any
+	for _, m := range result.Data {
+		models = append(models, map[string]any{
+			"id":       m.ID,
+			"object":   "model",
+			"created":  time.Now().Unix(),
+			"owned_by": "anthropic",
+		})
+	}
+
+	slog.Info("fetched anthropic models", "count", len(models))
+	return models
+}
+
+func anthropicFallbackModels() []map[string]any {
+	var models []map[string]any
+	for _, m := range []string{
+		"claude-opus-4-20250514",
+		"claude-opus-4-1-20250805",
+		"claude-sonnet-4-20250514",
+		"claude-sonnet-4-1-20250514",
+		"claude-haiku-3-5-20241022",
+	} {
+		models = append(models, map[string]any{
+			"id":       m,
+			"object":   "model",
+			"created":  time.Now().Unix(),
+			"owned_by": "anthropic",
+		})
+	}
+	return models
+}
+
+func openAIModels() []map[string]any {
+	var models []map[string]any
+	for _, m := range []string{
+		"gpt-4o",
+		"gpt-4o-mini",
+		"o3-mini",
+		"o4-mini",
+	} {
+		models = append(models, map[string]any{
+			"id":       m,
+			"object":   "model",
+			"created":  time.Now().Unix(),
+			"owned_by": "openai",
+		})
+	}
+	return models
 }
