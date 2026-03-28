@@ -1,5 +1,8 @@
 # launchdock
 
+[![CI](https://github.com/nghyane/launchdock/actions/workflows/ci.yml/badge.svg)](https://github.com/nghyane/launchdock/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/nghyane/launchdock)](https://github.com/nghyane/launchdock/releases/latest)
+
 Use your Claude Max or ChatGPT account across AI coding tools.
 
 `launchdock` lets you log in once and use that account across tools like OpenCode, Codex, Claude Code, Droid, and Pi. It gives you one local endpoint, one place to manage auth, and one fast setup flow for your personal AI stack.
