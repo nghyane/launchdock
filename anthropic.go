@@ -157,6 +157,15 @@ func PrefixTools(body []byte, prefix string) ([]byte, error) {
 		}
 	}
 
+	// Prefix explicit tool_choice
+	if tc, ok := req["tool_choice"].(map[string]any); ok {
+		if tc["type"] == "tool" {
+			if name, ok := tc["name"].(string); ok && !strings.HasPrefix(name, prefix) {
+				tc["name"] = prefix + name
+			}
+		}
+	}
+
 	return json.Marshal(req)
 }
 

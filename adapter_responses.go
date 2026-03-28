@@ -106,10 +106,10 @@ func ChatToResponsesRequest(body []byte) ([]byte, error) {
 		}
 	}
 
-	// Tools — same format in both APIs
-	if tools, ok := chat["tools"]; ok {
-		resp["tools"] = tools
-		resp["tool_choice"] = "auto"
+	// Tools — Chat Completions tool shape differs from Responses API
+	if tools, ok := chat["tools"].([]any); ok && len(tools) > 0 {
+		resp["tools"] = chatToolsToResponsesTools(tools)
+		resp["tool_choice"] = translateResponsesToolChoice(chat["tool_choice"])
 		resp["parallel_tool_calls"] = true
 	}
 
@@ -145,6 +145,58 @@ func ChatToResponsesRequest(body []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(resp)
+}
+
+func chatToolsToResponsesTools(tools []any) []map[string]any {
+	var out []map[string]any
+	for _, item := range tools {
+		tool, _ := item.(map[string]any)
+		if tool == nil {
+			continue
+		}
+		if toolType, _ := tool["type"].(string); toolType != "function" {
+			continue
+		}
+		fn, _ := tool["function"].(map[string]any)
+		if fn == nil {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		if name == "" {
+			continue
+		}
+		respTool := map[string]any{
+			"type": "function",
+			"name": name,
+		}
+		if desc, _ := fn["description"].(string); desc != "" {
+			respTool["description"] = desc
+		}
+		if params, ok := fn["parameters"]; ok {
+			respTool["parameters"] = params
+		}
+		out = append(out, respTool)
+	}
+	return out
+}
+
+func translateResponsesToolChoice(choice any) any {
+	if choice == nil {
+		return "auto"
+	}
+	switch v := choice.(type) {
+	case string:
+		return v
+	case map[string]any:
+		if toolType, _ := v["type"].(string); toolType == "function" {
+			if fn, ok := v["function"].(map[string]any); ok {
+				if name, _ := fn["name"].(string); name != "" {
+					return map[string]any{"type": "function", "name": name}
+				}
+			}
+		}
+	}
+	return "auto"
 }
 
 // contentToParts converts message content to Responses API content parts.

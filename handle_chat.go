@@ -389,15 +389,15 @@ func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *
 		return
 	}
 
-	upstreamURL := openai.ChatGPTBaseURL() + "/responses"
-	upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(respBody))
-	if err != nil {
-		httpError(w, http.StatusInternalServerError, "build request: "+err.Error())
-		return
-	}
-	openai.Prepare(upReq, cred)
-
-	upResp, err := StreamClient.Do(upReq)
+	upResp, cred, err := doWithCredentialRetry(pool, "openai", cred, func(current *Credential) (*http.Response, error) {
+		upstreamURL := openai.ChatGPTBaseURL() + "/responses"
+		upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(respBody))
+		if err != nil {
+			return nil, err
+		}
+		openai.Prepare(upReq, current)
+		return StreamClient.Do(upReq)
+	})
 	if err != nil {
 		httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
 		return
@@ -452,24 +452,53 @@ func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *
 				if delta, ok := obj["delta"].(string); ok {
 					textParts = append(textParts, delta)
 				}
+			case "response.output_item.added", "response.output_item.done":
+				if item, ok := obj["item"].(map[string]any); ok {
+					if item["type"] == "function_call" {
+						name, _ := item["name"].(string)
+						args, _ := item["arguments"].(string)
+						callID, _ := item["call_id"].(string)
+						if name != "" {
+							toolCalls = upsertToolCall(toolCalls, ChatToolCall{
+								ID:       callID,
+								Type:     "function",
+								Function: ChatFunctionCall{Name: name, Arguments: args},
+							})
+							finishReason = "tool_calls"
+						}
+					}
+				}
 			case "response.function_call_arguments.delta":
-				// Accumulate tool calls
-				name, _ := obj["name"].(string)
-				callID, _ := obj["call_id"].(string)
 				delta, _ := obj["delta"].(string)
-				if name != "" {
-					toolCalls = append(toolCalls, ChatToolCall{
-						ID:       callID,
-						Type:     "function",
-						Function: ChatFunctionCall{Name: name, Arguments: delta},
-					})
-					finishReason = "tool_calls"
-				} else if len(toolCalls) > 0 {
-					last := &toolCalls[len(toolCalls)-1]
-					last.Function.Arguments += delta
+				itemID, _ := obj["item_id"].(string)
+				if len(toolCalls) > 0 {
+					for i := range toolCalls {
+						if toolCalls[i].ID == itemID || (itemID == "" && i == len(toolCalls)-1) {
+							toolCalls[i].Function.Arguments += delta
+							finishReason = "tool_calls"
+							break
+						}
+					}
 				}
 			case "response.completed":
 				if resp, ok := obj["response"].(map[string]any); ok {
+					if output, ok := resp["output"].([]any); ok {
+						for _, item := range output {
+							if itemMap, ok := item.(map[string]any); ok && itemMap["type"] == "function_call" {
+								name, _ := itemMap["name"].(string)
+								args, _ := itemMap["arguments"].(string)
+								callID, _ := itemMap["call_id"].(string)
+								if name != "" {
+									toolCalls = upsertToolCall(toolCalls, ChatToolCall{
+										ID:       callID,
+										Type:     "function",
+										Function: ChatFunctionCall{Name: name, Arguments: args},
+									})
+									finishReason = "tool_calls"
+								}
+							}
+						}
+					}
 					if u, ok := resp["usage"].(map[string]any); ok {
 						usage = u
 					}
@@ -511,4 +540,14 @@ func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(chatResp)
 	}
+}
+
+func upsertToolCall(toolCalls []ChatToolCall, tc ChatToolCall) []ChatToolCall {
+	for i := range toolCalls {
+		if tc.ID != "" && toolCalls[i].ID == tc.ID {
+			toolCalls[i] = tc
+			return toolCalls
+		}
+	}
+	return append(toolCalls, tc)
 }
