@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -56,6 +57,12 @@ func HandleChatCompletions(pool *Pool, providers []Provider) http.HandlerFunc {
 			"credential", cred.Label,
 			"stream", chatReq.Stream,
 		)
+
+		// OpenAI OAuth (Codex) → route through Responses API with translation
+		if _, ok := provider.(*OpenAIProvider); ok && cred.AuthType == AuthOAuth {
+			handleChatViaResponsesAPI(w, r, &chatReq, body, provider.(*OpenAIProvider), pool, cred)
+			return
+		}
 
 		// Translate request
 		upstreamBody, urlPath, err := provider.TranslateRequest(&chatReq)
@@ -408,4 +415,138 @@ func stripPrefix(s, prefix string) string {
 		return s[len(prefix):]
 	}
 	return s
+}
+
+// handleChatViaResponsesAPI translates Chat Completions → Responses API for OpenAI OAuth.
+func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *ChatRequest, body []byte, openai *OpenAIProvider, pool *Pool, cred *Credential) {
+	// Translate Chat → Responses format
+	respBody, err := ChatToResponsesRequest(body)
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "translate to responses: "+err.Error())
+		return
+	}
+
+	upstreamURL := openai.ChatGPTBaseURL() + "/responses"
+	upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(respBody))
+	if err != nil {
+		httpError(w, http.StatusInternalServerError, "build request: "+err.Error())
+		return
+	}
+	openai.Prepare(upReq, cred)
+
+	client := &http.Client{Timeout: 10 * time.Minute}
+	upResp, err := client.Do(upReq)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
+		return
+	}
+	defer upResp.Body.Close()
+
+	if upResp.StatusCode != http.StatusOK {
+		handleUpstreamError(w, upResp, pool, cred)
+		return
+	}
+
+	// ChatGPT backend always streams — handle both client modes
+	if chatReq.Stream {
+		// Stream: translate Responses SSE → Chat SSE
+		sse, ok := NewSSEWriter(w)
+		if !ok {
+			httpError(w, http.StatusInternalServerError, "streaming not supported")
+			return
+		}
+		chatID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+		created := time.Now().Unix()
+		isFirst := true
+
+		ReadSSE(upResp.Body, func(ev SSEEvent) error {
+			chunk := ResponsesSSEToChatSSE(ev.Event, ev.Data, chatReq.Model, chatID, created, &isFirst)
+			if chunk != "" {
+				sse.WriteData(chunk)
+			}
+			var obj map[string]any
+			if json.Unmarshal([]byte(ev.Data), &obj) == nil {
+				if t, _ := obj["type"].(string); t == "response.completed" || t == "response.done" {
+					sse.WriteDone()
+				}
+			}
+			return nil
+		})
+	} else {
+		// Non-stream client but upstream always streams — collect SSE and build response
+		var textParts []string
+		var toolCalls []ChatToolCall
+		finishReason := "stop"
+		var usage map[string]any
+
+		ReadSSE(upResp.Body, func(ev SSEEvent) error {
+			var obj map[string]any
+			if json.Unmarshal([]byte(ev.Data), &obj) != nil {
+				return nil
+			}
+			typ, _ := obj["type"].(string)
+			switch typ {
+			case "response.output_text.delta":
+				if delta, ok := obj["delta"].(string); ok {
+					textParts = append(textParts, delta)
+				}
+			case "response.function_call_arguments.delta":
+				// Accumulate tool calls
+				name, _ := obj["name"].(string)
+				callID, _ := obj["call_id"].(string)
+				delta, _ := obj["delta"].(string)
+				if name != "" {
+					toolCalls = append(toolCalls, ChatToolCall{
+						ID:       callID,
+						Type:     "function",
+						Function: ChatFunctionCall{Name: name, Arguments: delta},
+					})
+					finishReason = "tool_calls"
+				} else if len(toolCalls) > 0 {
+					last := &toolCalls[len(toolCalls)-1]
+					last.Function.Arguments += delta
+				}
+			case "response.completed":
+				if resp, ok := obj["response"].(map[string]any); ok {
+					if u, ok := resp["usage"].(map[string]any); ok {
+						usage = u
+					}
+				}
+			}
+			return nil
+		})
+
+		msg := ChatMessage{Role: "assistant"}
+		text := strings.Join(textParts, "")
+		if text != "" {
+			msg.Content = text
+		}
+		if len(toolCalls) > 0 {
+			msg.ToolCalls = toolCalls
+		}
+
+		chatResp := map[string]any{
+			"id":      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
+			"object":  "chat.completion",
+			"created": time.Now().Unix(),
+			"model":   chatReq.Model,
+			"choices": []map[string]any{{
+				"index":         0,
+				"message":       msg,
+				"finish_reason": finishReason,
+			}},
+		}
+		if usage != nil {
+			inputTokens, _ := usage["input_tokens"].(float64)
+			outputTokens, _ := usage["output_tokens"].(float64)
+			chatResp["usage"] = map[string]any{
+				"prompt_tokens":     int(inputTokens),
+				"completion_tokens": int(outputTokens),
+				"total_tokens":      int(inputTokens + outputTokens),
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(chatResp)
+	}
 }
