@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -131,10 +133,16 @@ func ChatToResponsesRequest(body []byte) ([]byte, error) {
 		resp["text"] = text
 	}
 
-	// Prompt cache key — use conversation_id if provided, or generate stable one
-	// This enables server-side prompt caching across turns
+	// Prompt cache key — auto-generate from first user message hash
+	// This enables server-side prompt caching: same system prompt + tools prefix = cache hit
 	if cacheKey, ok := chat["prompt_cache_key"]; ok {
 		resp["prompt_cache_key"] = cacheKey
+	} else {
+		// Generate stable cache key from system prompt + model
+		// Same system prompt across requests → same cache key → cache hit
+		cacheInput := fmt.Sprintf("%s:%s", chat["model"], strings.Join(instructions, "\n"))
+		h := sha256.Sum256([]byte(cacheInput))
+		resp["prompt_cache_key"] = hex.EncodeToString(h[:16])
 	}
 
 	// Previous response ID — chain responses for incremental context
