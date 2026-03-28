@@ -154,7 +154,7 @@ func handleAuthPush() {
 
 func ensureRemoteLaunchdock(target string) error {
 	version := currentVersion()
-	if version == "" {
+	if version == "" || version == "dev" {
 		version = latestReleaseVersion()
 	}
 	check := exec.Command("ssh", target, "$HOME/.local/bin/launchdock version 2>/dev/null || launchdock version 2>/dev/null || true")
