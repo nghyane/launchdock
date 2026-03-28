@@ -1,27 +1,28 @@
 # launchdock
 
-Launch AI coding tools through one local runtime.
+Use your Claude Max or ChatGPT account across AI coding tools.
 
-`launchdock` discovers your Claude and OpenAI credentials, starts a local runtime when needed, and launches supported CLI tools against a single local endpoint.
+`launchdock` lets you log in once and use that account across tools like OpenCode, Codex, Claude Code, Droid, and Pi. It gives you one local endpoint, one place to manage auth, and one fast setup flow for your personal AI stack.
 
-It is designed for people who use multiple coding agents and want one place to manage auth, models, and local routing.
+## Why People Use It
 
-## Migration
+People reach for `launchdock` when they want to:
 
-This repo is moving from `llm-mux` to `launchdock`.
+- use `opencode`, `codex`, or other tools even though they only have a Claude Max or ChatGPT account
+- reuse the accounts they already pay for instead of managing separate API keys everywhere
+- get one local endpoint for personal AI tools and services
+- log in once and launch many tools quickly
+- spread traffic across multiple accounts to reduce rate-limit pain
 
-- default branch: `launchdock`
-- legacy code: keep on `legacy/llm-mux`
-- module path: `github.com/nghiahoang/launchdock`
-- binary: `launchdock`
+In short: one login, many tools, one local endpoint.
 
-## What It Does
+## What You Get
 
-- auto-discovers credentials from Claude Code, Codex, environment variables, and `launchdock` config
-- supports direct OAuth login for Claude and OpenAI
-- auto-starts a local runtime on `localhost:8090`
-- launches supported tools with the right provider and model wiring
-- pools credentials across accounts and routes requests by model/provider
+- one account can work across multiple AI coding tools
+- one local runtime on `localhost:8090`
+- one auth surface for Claude and OpenAI
+- one launch flow that writes config and starts the runtime automatically
+- support for multiple discovered accounts and credential rotation
 
 ## Quickstart
 
@@ -33,17 +34,18 @@ launchdock auth login openai
 # inspect discovered credentials
 launchdock auth list
 
-# launch a tool
+# launch tools
 launchdock launch claude-code
 launchdock launch codex
+launchdock launch opencode
 ```
 
 `launchdock launch <tool>` automatically:
 
 - checks credentials
-- starts the local runtime if it is not already running
-- lets you pick a compatible model when needed
-- writes tool config if the tool expects one
+- starts the local runtime if needed
+- picks compatible models for the selected tool
+- writes tool config when required
 - launches the tool
 
 ## Supported Tools
@@ -82,9 +84,9 @@ launchdock restart
 launchdock stop
 ```
 
-## Runtime
+## How It Works
 
-The runtime listens on `http://localhost:8090` by default and exposes:
+`launchdock` runs a local runtime on `http://localhost:8090` and exposes:
 
 - `/v1/chat/completions`
 - `/v1/messages`
@@ -92,13 +94,22 @@ The runtime listens on `http://localhost:8090` by default and exposes:
 - `/v1/models`
 - `/health`
 
-`launchdock launch ...` auto-starts this runtime in the background when necessary.
+It discovers credentials from local tools, environment variables, and `launchdock` config, then routes requests to the right provider for the selected model.
 
 State files live in:
 
 - `~/.launchdock/launchdock.pid`
 - `~/.launchdock/launchdock.log`
 - `~/.config/launchdock/config.json`
+
+## Migration
+
+This repo is moving from `llm-mux` to `launchdock`.
+
+- default branch: `main`
+- legacy code: `legacy/llm-mux`
+- module path: `github.com/nghiahoang/launchdock`
+- binary: `launchdock`
 
 ## Build
 
@@ -108,6 +119,6 @@ go build -o launchdock .
 
 ## Notes
 
-- native terminal UI uses raw ANSI input, no external Go dependencies
+- native terminal UI uses raw ANSI input and no external Go dependencies
 - Claude and OpenAI OAuth flows use a local browser callback
-- OpenAI auth is provider-aware and stores refreshable credentials in `launchdock` config
+- OpenAI credentials keep account metadata for provider-aware routing
