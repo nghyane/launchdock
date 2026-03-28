@@ -3,159 +3,306 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
-const muxBaseURL = "http://localhost:8090/v1"
-const muxAPIKey = "llm-mux"
+// --- Setup config (resolved at runtime) ---
+
+type SetupConfig struct {
+	BaseURL      string // e.g. http://localhost:8090/v1
+	RawURL       string // e.g. http://localhost:8090 (no /v1)
+	APIKey       string
+	Models       []string // dynamic from /v1/models
+	DefaultModel string
+}
+
+func resolveSetupConfig() SetupConfig {
+	port := "8090"
+	// Check --port flag
+	for i, arg := range os.Args {
+		if arg == "--port" && i+1 < len(os.Args) {
+			port = os.Args[i+1]
+		}
+	}
+	if p := os.Getenv("PORT"); p != "" {
+		port = p
+	}
+
+	raw := fmt.Sprintf("http://localhost:%s", port)
+	base := raw + "/v1"
+	cfg := SetupConfig{
+		BaseURL: base,
+		RawURL:  raw,
+		APIKey:  "llm-mux",
+	}
+
+	// Try fetch models from running mux
+	cfg.Models = fetchModelsFromMux(base)
+	if len(cfg.Models) > 0 {
+		cfg.DefaultModel = cfg.Models[0]
+	} else {
+		cfg.DefaultModel = "claude-sonnet-4-20250514"
+		cfg.Models = []string{"claude-sonnet-4-20250514", "claude-opus-4-20250514", "gpt-5.4"}
+	}
+
+	return cfg
+}
+
+func fetchModelsFromMux(baseURL string) []string {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(baseURL + "/models")
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&result) != nil {
+		return nil
+	}
+	var models []string
+	for _, m := range result.Data {
+		models = append(models, m.ID)
+	}
+	return models
+}
+
+// --- Tool registry ---
+
+type Tool struct {
+	Name   string
+	Desc   string
+	Binary string // binary name for detection
+	Setup  func(cfg SetupConfig)
+}
+
+var tools = []Tool{
+	{"cursor", "Cursor IDE", "cursor", setupCursor},
+	{"cline", "Cline / Roo-Cline (VSCode)", "", setupCline},
+	{"aider", "Aider CLI", "aider", setupAider},
+	{"continue", "Continue.dev", "", setupContinue},
+	{"codex", "OpenAI Codex CLI", "codex", setupCodex},
+	{"claude-code", "Claude Code CLI", "claude", setupClaudeCode},
+	{"opencode", "OpenCode", "opencode", setupOpenCode},
+	{"droid", "Factory Droid CLI", "droid", setupDroid},
+	{"pi", "Pi agent", "pi", setupPi},
+	{"env", "Shell environment variables", "", setupEnv},
+}
+
+func findTool(name string) *Tool {
+	for i := range tools {
+		if tools[i].Name == name {
+			return &tools[i]
+		}
+	}
+	return nil
+}
+
+func isInstalled(binary string) bool {
+	if binary == "" {
+		return false
+	}
+	_, err := exec.LookPath(binary)
+	return err == nil
+}
+
+// --- Entry point ---
 
 func handleSetupCommand() {
-	if len(os.Args) < 3 {
-		printSetupHelp()
+	// Parse --port flag and remove from args
+	var toolName string
+	for _, arg := range os.Args[2:] {
+		if arg == "--port" || strings.HasPrefix(arg, "--") {
+			continue
+		}
+		if toolName == "" {
+			toolName = strings.ToLower(arg)
+		}
+	}
+
+	if toolName == "" || toolName == "--check" {
+		if toolName == "--check" {
+			handleSetupCheck()
+			return
+		}
+		handleSetupInteractive()
 		return
 	}
 
-	tool := strings.ToLower(os.Args[2])
-	switch tool {
-	case "cursor":
-		setupCursor()
-	case "cline":
-		setupCline()
-	case "aider":
-		setupAider()
-	case "continue":
-		setupContinue()
-	case "codex":
-		setupCodex()
-	case "opencode":
-		setupOpenCode()
-	case "claude", "claude-code":
-		setupClaudeCode()
-	case "droid":
-		setupDroid()
-	case "pi":
-		setupPi()
-	case "env":
-		setupEnv()
-	default:
-		fmt.Fprintf(os.Stderr, "Unknown tool: %s\n\n", tool)
+	// Alias
+	if toolName == "claude" {
+		toolName = "claude-code"
+	}
+
+	t := findTool(toolName)
+	if t == nil {
+		fmt.Fprintf(os.Stderr, "Unknown tool: %s\n\n", toolName)
 		printSetupHelp()
 		os.Exit(1)
 	}
+
+	cfg := resolveSetupConfig()
+
+	// Check if binary installed
+	if t.Binary != "" && !isInstalled(t.Binary) {
+		fmt.Fprintf(os.Stderr, "⚠ %s (%s) not found in PATH\n", t.Name, t.Binary)
+		fmt.Fprintf(os.Stderr, "  Setup will continue but config may not be used.\n\n")
+	}
+
+	if len(cfg.Models) > 3 {
+		fmt.Printf("⚡ Connected to llm-mux — %d models available\n", len(cfg.Models))
+	} else {
+		fmt.Println("⚠ Could not connect to llm-mux — using defaults")
+		fmt.Println("  Start mux first: llm-mux &")
+	}
+	fmt.Println()
+
+	t.Setup(cfg)
+}
+
+func handleSetupInteractive() {
+	cfg := resolveSetupConfig()
+
+	fmt.Println("llm-mux setup — detected tools:\n")
+
+	found := 0
+	for _, t := range tools {
+		if t.Binary == "" {
+			continue
+		}
+		status := "  ✗ not found"
+		if isInstalled(t.Binary) {
+			status = "  ✓ installed"
+			found++
+		}
+		fmt.Printf("  %-12s %-30s %s\n", t.Name, t.Desc, status)
+	}
+
+	fmt.Printf("\n  %d tool(s) detected. Run: llm-mux setup <tool>\n", found)
+
+	if len(cfg.Models) > 0 {
+		fmt.Printf("\n  Models available (%d):\n", len(cfg.Models))
+		for _, m := range cfg.Models {
+			fmt.Printf("    %s\n", m)
+		}
+	}
+	fmt.Println()
+	printSetupHelp()
+}
+
+func handleSetupCheck() {
+	fmt.Println("llm-mux setup --check\n")
+	cfg := resolveSetupConfig()
+
+	if len(cfg.Models) > 0 {
+		fmt.Printf("✓ llm-mux running at %s (%d models)\n", cfg.RawURL, len(cfg.Models))
+	} else {
+		fmt.Printf("✗ llm-mux not running at %s\n", cfg.RawURL)
+	}
+	fmt.Println()
 }
 
 func printSetupHelp() {
-	fmt.Print(`Usage: llm-mux setup <tool>
+	fmt.Print(`Usage: llm-mux setup [tool] [--port PORT]
 
-Supported tools:
-  cursor      Cursor IDE (manual — print instructions)
-  cline       Cline VSCode extension (manual — print instructions)
-  aider       Aider CLI (auto-write ~/.aider.conf.yml)
-  continue    Continue.dev (auto-add model to config.yaml)
-  codex       OpenAI Codex CLI (auto-write config.toml)
-  claude-code Claude Code CLI (native /v1/messages)
-  opencode    OpenCode (auto-write config.json)
-  droid       Factory Droid CLI (auto-write config.json)
-  pi          Pi agent (auto-write models.json)
-  env         Print shell export commands
+  llm-mux setup              Detect installed tools
+  llm-mux setup <tool>       Configure a specific tool
+  llm-mux setup --check      Verify mux is running
+
+Tools: cursor, cline, aider, continue, codex, claude-code,
+       opencode, droid, pi, env
 
 `)
 }
 
-// --- Claude Code (env vars — native /v1/messages) ---
+// --- Tool setup implementations ---
 
-func setupClaudeCode() {
-	fmt.Print(`
-┌─ Claude Code CLI Setup ─────────────────────────────────────┐
-│                                                             │
-│  Claude Code connects via /v1/messages (Anthropic format).  │
-│  llm-mux supports this natively — same as Ollama does.      │
-│                                                             │
-│  Option 1: Environment variables                            │
-│                                                             │
-│    export ANTHROPIC_BASE_URL=http://localhost:8090           │
-│    export ANTHROPIC_AUTH_TOKEN=llm-mux                       │
-│    export ANTHROPIC_API_KEY=""                                │
-│    claude --model claude-sonnet-4-20250514                    │
-│                                                             │
-│  Option 2: One-liner                                        │
-│                                                             │
-│    ANTHROPIC_BASE_URL=http://localhost:8090 \                │
-│    ANTHROPIC_AUTH_TOKEN=llm-mux \                            │
-│    ANTHROPIC_API_KEY="" \                                     │
-│    claude --model claude-sonnet-4-20250514                    │
-│                                                             │
-│  This routes through mux's /v1/messages endpoint with       │
-│  pool rotation, credential management, and caching.         │
-│                                                             │
-│  Use case: Run multiple Claude Code instances sharing       │
-│  the same credential pool with automatic rotation.          │
-└─────────────────────────────────────────────────────────────┘
-`)
-}
-
-// --- Cursor (manual) ---
-
-func setupCursor() {
-	fmt.Print(`
-┌─ Cursor IDE Setup ──────────────────────────────────────────┐
+func setupCursor(cfg SetupConfig) {
+	fmt.Printf(`┌─ Cursor IDE ────────────────────────────────────────────────┐
 │                                                             │
 │  1. Open Cursor → Settings (⌘,) → Models                   │
-│  2. Set "OpenAI API Key" to: llm-mux                        │
+│  2. Set "OpenAI API Key" to: %s
 │  3. Set "Override OpenAI Base URL" to:                       │
-│     http://localhost:8090/v1                                 │
-│  4. Select model: claude-sonnet-4-20250514                   │
+│     %s
+│  4. Select model: %s
 │                                                             │
-│  Note: Cursor may send Responses API format for some        │
-│  models. llm-mux handles both /v1/chat/completions and      │
-│  /v1/responses automatically.                               │
+│  Note: Cursor sends both Chat Completions and Responses     │
+│  API formats. llm-mux handles both automatically.           │
 │                                                             │
-│  Tip: Enable "HTTP Compatibility Mode" → HTTP/1.1 in        │
-│  Cursor Settings → Network if you see TLS errors.           │
+│  Tip: Enable "HTTP Compatibility Mode" → HTTP/1.1 if        │
+│  you see TLS errors.                                        │
 └─────────────────────────────────────────────────────────────┘
-`)
+`, pad(cfg.APIKey, 25), pad(cfg.BaseURL, 25), pad(cfg.DefaultModel, 25))
 }
 
-// --- Cline (manual) ---
-
-func setupCline() {
-	fmt.Print(`
-┌─ Cline / Roo-Cline VSCode Setup ────────────────────────────┐
+func setupCline(cfg SetupConfig) {
+	fmt.Printf(`┌─ Cline / Roo-Cline (VSCode) ─────────────────────────────────┐
 │                                                              │
 │  1. Open VSCode → Extensions → Cline → Settings              │
-│  2. Set API Provider: "OpenAI Compatible"                    │
-│  3. Base URL: http://localhost:8090/v1                        │
-│  4. API Key:  llm-mux                                        │
-│  5. Model ID: claude-sonnet-4-20250514                       │
+│  2. API Provider: "OpenAI Compatible"                        │
+│  3. Base URL: %s
+│  4. API Key:  %s
+│  5. Model ID: %s
 │                                                              │
 │  Or add to settings.json:                                    │
 │  "cline.apiProvider": "openai-compatible",                   │
-│  "cline.openAiBaseUrl": "http://localhost:8090/v1",          │
-│  "cline.openAiApiKey": "llm-mux",                           │
-│  "cline.openAiModelId": "claude-sonnet-4-20250514"           │
+│  "cline.openAiBaseUrl": "%s",
+│  "cline.openAiApiKey": "%s",
+│  "cline.openAiModelId": "%s"
 └──────────────────────────────────────────────────────────────┘
-`)
+`, pad(cfg.BaseURL, 26), pad(cfg.APIKey, 26), pad(cfg.DefaultModel, 26),
+		cfg.BaseURL, cfg.APIKey, cfg.DefaultModel)
 }
 
-// --- Aider (auto-write) ---
+func setupClaudeCode(cfg SetupConfig) {
+	fmt.Printf(`┌─ Claude Code CLI ────────────────────────────────────────────┐
+│                                                              │
+│  Claude Code uses /v1/messages (Anthropic format) natively.  │
+│                                                              │
+│  Option 1: Environment variables                             │
+│                                                              │
+│    export ANTHROPIC_BASE_URL=%s
+│    export ANTHROPIC_AUTH_TOKEN=%s
+│    export ANTHROPIC_API_KEY=""                                │
+│    claude --model %s
+│                                                              │
+│  Option 2: One-liner                                         │
+│                                                              │
+│    ANTHROPIC_BASE_URL=%s \
+│    ANTHROPIC_AUTH_TOKEN=%s \
+│    ANTHROPIC_API_KEY="" \                                     │
+│    claude --model %s
+│                                                              │
+│  Use case: Multiple Claude Code instances sharing            │
+│  the same credential pool with automatic rotation.           │
+└──────────────────────────────────────────────────────────────┘
+`, pad(cfg.RawURL, 22), pad(cfg.APIKey, 22), pad(cfg.DefaultModel, 22),
+		cfg.RawURL, cfg.APIKey, cfg.DefaultModel)
+}
 
-func setupAider() {
+func setupAider(cfg SetupConfig) {
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".aider.conf.yml")
 
-	content := fmt.Sprintf(`## llm-mux configuration
-## Routes to Claude/GPT via local proxy
+	var modelLines []string
+	modelLines = append(modelLines, fmt.Sprintf("model: openai/%s", cfg.DefaultModel))
+	for _, m := range cfg.Models {
+		if m != cfg.DefaultModel {
+			modelLines = append(modelLines, fmt.Sprintf("# model: openai/%s", m))
+		}
+	}
 
-openai-api-base: %s
-openai-api-key: %s
-model: openai/claude-sonnet-4-20250514
-
-## Alternative models:
-# model: openai/claude-opus-4-20250514
-# model: openai/gpt-5.4
-`, muxBaseURL, muxAPIKey)
+	content := fmt.Sprintf("## llm-mux configuration\n\nopenai-api-base: %s\nopenai-api-key: %s\n%s\n",
+		cfg.BaseURL, cfg.APIKey, strings.Join(modelLines, "\n"))
 
 	if err := writeConfigSafe(path, []byte(content)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -165,40 +312,24 @@ model: openai/claude-sonnet-4-20250514
 	fmt.Println("  Run: aider")
 }
 
-// --- Continue (auto-add model) ---
-
-func setupContinue() {
+func setupContinue(cfg SetupConfig) {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".continue")
 	path := filepath.Join(dir, "config.yaml")
 
-	// Don't overwrite — append model entry
-	entry := fmt.Sprintf(`
-  # llm-mux models
-  - name: Claude Sonnet (via llm-mux)
-    provider: openai
-    model: claude-sonnet-4-20250514
-    apiBase: %s
-    apiKey: %s
-  - name: Claude Opus (via llm-mux)
-    provider: openai
-    model: claude-opus-4-20250514
-    apiBase: %s
-    apiKey: %s
-  - name: GPT-5.4 (via llm-mux)
-    provider: openai
-    model: gpt-5.4
-    apiBase: %s
-    apiKey: %s
-`, muxBaseURL, muxAPIKey, muxBaseURL, muxAPIKey, muxBaseURL, muxAPIKey)
+	var entries []string
+	for _, m := range cfg.Models {
+		entries = append(entries, fmt.Sprintf(
+			"  - name: %s (via llm-mux)\n    provider: openai\n    model: %s\n    apiBase: %s\n    apiKey: %s",
+			m, m, cfg.BaseURL, cfg.APIKey))
+	}
+	block := "\n  # llm-mux models\n" + strings.Join(entries, "\n")
 
 	if _, err := os.Stat(path); err == nil {
-		fmt.Printf("Found existing %s\n", path)
-		fmt.Println("Add these model entries under 'models:' section:")
-		fmt.Println(entry)
+		fmt.Printf("Found existing %s\nAdd under 'models:' section:\n%s\n", path, block)
 	} else {
 		os.MkdirAll(dir, 0755)
-		content := fmt.Sprintf("name: llm-mux\nversion: 1.0.0\nschema: v1\nmodels:\n%s", entry)
+		content := "name: llm-mux\nversion: 1.0.0\nschema: v1\nmodels:\n" + block + "\n"
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -207,227 +338,153 @@ func setupContinue() {
 	}
 }
 
-// --- Codex (auto-write model_providers) ---
-
-func setupCodex() {
+func setupCodex(cfg SetupConfig) {
 	home, _ := os.UserHomeDir()
 	path := filepath.Join(home, ".codex", "config.toml")
 
 	existing, _ := os.ReadFile(path)
-	content := string(existing)
-
-	if strings.Contains(content, "llm-mux") {
+	if strings.Contains(string(existing), "llm-mux") {
 		fmt.Printf("⚠ %s already configured for llm-mux\n", path)
 		return
 	}
 
-	// Add model_providers block
-	block := fmt.Sprintf(`
-model_provider = "llm-mux"
-
-[model_providers.llm-mux]
-name = "llm-mux"
-base_url = "%s"
-env_key = "LLM_MUX_KEY"
-`, muxBaseURL)
-
-	newContent := content + block
+	block := fmt.Sprintf("\nmodel_provider = \"llm-mux\"\n\n[model_providers.llm-mux]\nname = \"llm-mux\"\nbase_url = \"%s\"\nenv_key = \"LLM_MUX_KEY\"\n", cfg.BaseURL)
+	newContent := string(existing) + block
 	if err := os.WriteFile(path, []byte(newContent), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 	fmt.Printf("✓ Updated %s\n", path)
-	fmt.Println("  Run: codex -m claude-sonnet-4-20250514")
+	fmt.Printf("  Run: codex -m %s\n", cfg.DefaultModel)
 }
 
-// --- OpenCode (auto-write) ---
-
-func setupOpenCode() {
+func setupOpenCode(cfg SetupConfig) {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".config", "opencode")
 	path := filepath.Join(dir, "opencode.json")
+
+	models := map[string]any{}
+	for _, m := range cfg.Models {
+		models[m] = map[string]any{"name": m}
+	}
 
 	config := map[string]any{
 		"$schema": "https://opencode.ai/config.json",
 		"provider": map[string]any{
 			"llm-mux": map[string]any{
-				"npm":  "@ai-sdk/openai-compatible",
-				"name": "llm-mux",
-				"options": map[string]any{
-					"baseURL": muxBaseURL,
-				},
-				"models": map[string]any{
-					"claude-sonnet-4-20250514": map[string]any{"name": "Claude Sonnet"},
-					"claude-opus-4-20250514":   map[string]any{"name": "Claude Opus"},
-					"gpt-5.4":                  map[string]any{"name": "GPT-5.4"},
-				},
+				"npm":     "@ai-sdk/openai-compatible",
+				"name":    "llm-mux",
+				"options": map[string]any{"baseURL": cfg.BaseURL},
+				"models":  models,
 			},
 		},
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	os.MkdirAll(dir, 0755)
-
-	if _, err := os.Stat(path); err == nil {
-		fmt.Printf("⚠ %s already exists\n", path)
-		fmt.Println("  Merge this provider block:")
-		fmt.Println(string(data))
-		return
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("✓ Wrote %s\n", path)
+	writeJSONConfigSafe(path, dir, config)
 }
 
-// --- Droid (auto-write ~/.factory/config.json) ---
-
-func setupDroid() {
+func setupDroid(cfg SetupConfig) {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".factory")
 	path := filepath.Join(dir, "config.json")
 
-	config := map[string]any{
-		"custom_models": []map[string]any{
-			{
-				"model_display_name": "Claude Sonnet [llm-mux]",
-				"model":              "claude-sonnet-4-20250514",
-				"base_url":           muxBaseURL + "/",
-				"api_key":            muxAPIKey,
-				"provider":           "generic-chat-completion-api",
-				"max_tokens":         128000,
-			},
-			{
-				"model_display_name": "Claude Opus [llm-mux]",
-				"model":              "claude-opus-4-20250514",
-				"base_url":           muxBaseURL + "/",
-				"api_key":            muxAPIKey,
-				"provider":           "generic-chat-completion-api",
-				"max_tokens":         128000,
-			},
-			{
-				"model_display_name": "GPT-5.4 [llm-mux]",
-				"model":              "gpt-5.4",
-				"base_url":           muxBaseURL + "/",
-				"api_key":            muxAPIKey,
-				"provider":           "generic-chat-completion-api",
-				"max_tokens":         128000,
-			},
-		},
+	var customModels []map[string]any
+	for _, m := range cfg.Models {
+		customModels = append(customModels, map[string]any{
+			"model_display_name": m + " [llm-mux]",
+			"model":              m,
+			"base_url":           cfg.BaseURL + "/",
+			"api_key":            cfg.APIKey,
+			"provider":           "generic-chat-completion-api",
+			"max_tokens":         128000,
+		})
 	}
 
-	data, _ := json.MarshalIndent(config, "", "  ")
-	os.MkdirAll(dir, 0755)
-
-	if _, err := os.Stat(path); err == nil {
-		fmt.Printf("⚠ %s already exists\n", path)
-		fmt.Println("  Merge these custom_models entries:")
-		fmt.Println(string(data))
-		return
-	}
-
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("✓ Wrote %s\n", path)
+	writeJSONConfigSafe(path, dir, map[string]any{"custom_models": customModels})
 	fmt.Println("  Run: droid")
 }
 
-// --- Pi (auto-write ~/.pi/agent/models.json + settings.json) ---
-
-func setupPi() {
+func setupPi(cfg SetupConfig) {
 	home, _ := os.UserHomeDir()
 	dir := filepath.Join(home, ".pi", "agent")
 
-	// models.json
-	modelsPath := filepath.Join(dir, "models.json")
+	var modelIDs []map[string]any
+	for _, m := range cfg.Models {
+		modelIDs = append(modelIDs, map[string]any{"id": m})
+	}
+
 	modelsConfig := map[string]any{
 		"providers": map[string]any{
 			"llm-mux": map[string]any{
-				"baseUrl": muxBaseURL,
+				"baseUrl": cfg.BaseURL,
 				"api":     "openai-completions",
-				"apiKey":  muxAPIKey,
-				"models": []map[string]any{
-					{"id": "claude-sonnet-4-20250514"},
-					{"id": "claude-opus-4-20250514"},
-					{"id": "gpt-5.4"},
-				},
+				"apiKey":  cfg.APIKey,
+				"models":  modelIDs,
 			},
 		},
 	}
-	modelsData, _ := json.MarshalIndent(modelsConfig, "", "  ")
-
-	// settings.json
-	settingsPath := filepath.Join(dir, "settings.json")
 	settingsConfig := map[string]any{
 		"defaultProvider": "llm-mux",
-		"defaultModel":    "claude-sonnet-4-20250514",
-	}
-	settingsData, _ := json.MarshalIndent(settingsConfig, "", "  ")
-
-	os.MkdirAll(dir, 0755)
-
-	if _, err := os.Stat(modelsPath); err == nil {
-		fmt.Printf("⚠ %s already exists\n", modelsPath)
-		fmt.Println("  Merge this provider:")
-		fmt.Println(string(modelsData))
-	} else {
-		if err := os.WriteFile(modelsPath, modelsData, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing models.json: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("✓ Wrote %s\n", modelsPath)
+		"defaultModel":    cfg.DefaultModel,
 	}
 
-	if _, err := os.Stat(settingsPath); err == nil {
-		fmt.Printf("⚠ %s already exists — update manually:\n", settingsPath)
-		fmt.Println(string(settingsData))
-	} else {
-		if err := os.WriteFile(settingsPath, settingsData, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Error writing settings.json: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("✓ Wrote %s\n", settingsPath)
-	}
+	writeJSONConfigSafe(filepath.Join(dir, "models.json"), dir, modelsConfig)
+	writeJSONConfigSafe(filepath.Join(dir, "settings.json"), dir, settingsConfig)
 	fmt.Println("  Run: pi")
 }
 
-// --- Env vars ---
-
-func setupEnv() {
-	fmt.Printf(`# Add to your shell profile (~/.zshrc, ~/.bashrc):
+func setupEnv(cfg SetupConfig) {
+	fmt.Printf(`# Add to ~/.zshrc or ~/.bashrc:
 
 export OPENAI_API_BASE=%s
 export OPENAI_API_KEY=%s
 
-# Or for specific tools:
-export OPENAI_BASE_URL=%s     # OpenAI SDK
-export ANTHROPIC_BASE_URL=%s  # Anthropic SDK (if needed)
+# For Anthropic SDK / Claude Code:
+export OPENAI_BASE_URL=%s
+export ANTHROPIC_BASE_URL=%s
 
 # Then use any OpenAI-compatible tool:
-#   aider --model openai/claude-sonnet-4-20250514
+#   aider --model openai/%s
 #   python -c "from openai import OpenAI; c=OpenAI(); ..."
-`, muxBaseURL, muxAPIKey, muxBaseURL, "http://localhost:8090")
+`, cfg.BaseURL, cfg.APIKey, cfg.BaseURL, cfg.RawURL, cfg.DefaultModel)
 }
 
 // --- Helpers ---
 
 func writeConfigSafe(path string, data []byte) error {
 	if _, err := os.Stat(path); err == nil {
-		// Backup existing
 		backup := path + ".bak"
 		if err := os.Rename(path, backup); err != nil {
 			return fmt.Errorf("backup %s: %w", path, err)
 		}
 		fmt.Printf("  Backed up existing to %s\n", backup)
 	}
-
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
+	os.MkdirAll(dir, 0755)
 	return os.WriteFile(path, data, 0644)
+}
+
+func writeJSONConfigSafe(path, dir string, config any) {
+	data, _ := json.MarshalIndent(config, "", "  ")
+	os.MkdirAll(dir, 0755)
+
+	if _, err := os.Stat(path); err == nil {
+		fmt.Printf("⚠ %s already exists\n", path)
+		fmt.Println("  Merge this config:")
+		fmt.Println(string(data))
+		return
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✓ Wrote %s\n", path)
+}
+
+func pad(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(s))
 }
