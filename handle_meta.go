@@ -154,16 +154,66 @@ func anthropicFallbackModels() []map[string]any {
 	return models
 }
 
+const codexModelsURL = "https://raw.githubusercontent.com/openai/codex/main/codex-rs/core/models.json"
+
 func openAIModels() []map[string]any {
-	// Bundled from Codex CLI models.json — Codex OAuth lacks api.model.read scope
+	// Try fetching from Codex repo
+	if models := fetchCodexModels(); len(models) > 0 {
+		return models
+	}
+	// Fallback hardcoded
+	return openAIFallbackModels()
+}
+
+func fetchCodexModels() []map[string]any {
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(codexModelsURL)
+	if err != nil {
+		slog.Debug("codex models fetch failed", "error", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil
+	}
+
+	var result struct {
+		Models []struct {
+			Slug          string `json:"slug"`
+			DisplayName   string `json:"display_name"`
+			Visibility    string `json:"visibility"`
+			ContextWindow int    `json:"context_window"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		slog.Debug("codex models parse failed", "error", err)
+		return nil
+	}
+
+	var models []map[string]any
+	for _, m := range result.Models {
+		if m.Visibility != "list" {
+			continue
+		}
+		models = append(models, map[string]any{
+			"id":       m.Slug,
+			"object":   "model",
+			"created":  time.Now().Unix(),
+			"owned_by": "openai",
+		})
+	}
+
+	slog.Info("fetched codex models", "count", len(models))
+	return models
+}
+
+func openAIFallbackModels() []map[string]any {
 	var models []map[string]any
 	for _, m := range []string{
 		"gpt-5.4",
 		"gpt-5.4-mini",
 		"gpt-5.3-codex",
-		"gpt-4o",
-		"gpt-4o-mini",
-		"o3",
 		"o3-mini",
 		"o4-mini",
 	} {
