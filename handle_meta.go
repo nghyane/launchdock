@@ -28,8 +28,10 @@ func HandleModels(pool *Pool) http.HandlerFunc {
 
 		if pool.Count("anthropic") > 0 {
 			for _, m := range []string{
-				"claude-sonnet-4-20250514",
 				"claude-opus-4-20250514",
+				"claude-opus-4-1-20250805",
+				"claude-sonnet-4-20250514",
+				"claude-sonnet-4-1-20250514",
 				"claude-haiku-3-5-20241022",
 			} {
 				models = append(models, map[string]any{
@@ -45,7 +47,8 @@ func HandleModels(pool *Pool) http.HandlerFunc {
 			for _, m := range []string{
 				"gpt-4o",
 				"gpt-4o-mini",
-				"o1-preview",
+				"o3-mini",
+				"o4-mini",
 			} {
 				models = append(models, map[string]any{
 					"id":       m,
