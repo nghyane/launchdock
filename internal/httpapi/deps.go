@@ -50,14 +50,23 @@ func PrefixTools(body []byte, prefix string) ([]byte, error) {
 func EnsureOAuthRequirements(body []byte) ([]byte, error) {
 	return providerspkg.EnsureOAuthRequirements(body)
 }
+func PrepareAnthropicOAuthBody(body []byte, prefix string) ([]byte, error) {
+	return providerspkg.PrepareOAuthBody(body, prefix)
+}
 func StripToolPrefix(data []byte, prefix string) []byte {
 	return providerspkg.StripToolPrefix(data, prefix)
 }
 func ChatToResponsesRequest(body []byte) ([]byte, error) {
 	return protocol.ChatToResponsesRequest(body)
 }
-func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, created int64, isFirst *bool) string {
-	return protocol.ResponsesSSEToChatSSE(eventType, data, model, chatID, created, isFirst)
+
+type ResponsesToChatState = protocol.ResponsesToChatState
+
+func NewResponsesToChatState() *protocol.ResponsesToChatState {
+	return protocol.NewResponsesToChatState()
+}
+func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, created int64, state *ResponsesToChatState) string {
+	return protocol.ResponsesSSEToChatSSE(eventType, data, model, chatID, created, state)
 }
 func ResponsesNonStreamToChat(body []byte, model string) ([]byte, error) {
 	return protocol.ResponsesNonStreamToChat(body, model)

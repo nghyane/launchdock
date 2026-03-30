@@ -91,8 +91,7 @@ func HandleChatCompletions(pool *providerspkg.Pool, providers []providerspkg.Pro
 
 		// Apply OAuth quirks for Anthropic
 		if _, ok := provider.(*providerspkg.AnthropicProvider); ok && cred.AuthType == authpkg.AuthOAuth {
-			upstreamBody, _ = providerspkg.PrefixTools(upstreamBody, "mcp_")
-			upstreamBody, _ = providerspkg.EnsureOAuthRequirements(upstreamBody)
+			upstreamBody, _ = providerspkg.PrepareOAuthBody(upstreamBody, "mcp_")
 		}
 
 		// Send with retry on retryable errors
@@ -188,6 +187,10 @@ func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Cr
 	ReadSSE(body, func(ev SSEEvent) error {
 		for _, chunk := range adapter.Consume(ev.Event, ev.Data) {
 			sse.WriteJSON(chunk)
+		}
+		if ev.Event == "message_stop" {
+			sse.WriteDone()
+			return nil
 		}
 		var event struct {
 			Type string `json:"type"`
@@ -363,7 +366,6 @@ func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *
 		httpError(w, http.StatusInternalServerError, "translate to responses: "+err.Error())
 		return
 	}
-
 	upResp, cred, err := doWithCredentialRetry(pool, "openai", cred, func(current *Credential) (*http.Response, error) {
 		upstreamURL := openai.ChatGPTBaseURL() + "/responses"
 		upReq, err := http.NewRequestWithContext(r.Context(), "POST", upstreamURL, bytes.NewReader(respBody))
@@ -394,12 +396,12 @@ func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *
 		}
 		chatID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 		created := time.Now().Unix()
-		isFirst := true
+		state := NewResponsesToChatState()
 
 		ReadSSE(upResp.Body, func(ev SSEEvent) error {
-			chunk := ResponsesSSEToChatSSE(ev.Event, ev.Data, chatReq.Model, chatID, created, &isFirst)
+			chunk := ResponsesSSEToChatSSE(ev.Event, ev.Data, chatReq.Model, chatID, created, state)
 			if chunk != "" {
-				sse.WriteData(chunk)
+				sse.WriteRawJSON([]byte(chunk))
 			}
 			var obj map[string]any
 			if json.Unmarshal([]byte(ev.Data), &obj) == nil {
@@ -410,119 +412,17 @@ func handleChatViaResponsesAPI(w http.ResponseWriter, r *http.Request, chatReq *
 			return nil
 		})
 	} else {
-		// Non-stream client but upstream always streams — collect SSE and build response
-		var textParts []string
-		var toolCalls []ChatToolCall
-		finishReason := "stop"
-		var usage map[string]any
-
-		ReadSSE(upResp.Body, func(ev SSEEvent) error {
-			var obj map[string]any
-			if json.Unmarshal([]byte(ev.Data), &obj) != nil {
-				return nil
-			}
-			typ, _ := obj["type"].(string)
-			switch typ {
-			case "response.output_text.delta":
-				if delta, ok := obj["delta"].(string); ok {
-					textParts = append(textParts, delta)
-				}
-			case "response.output_item.added", "response.output_item.done":
-				if item, ok := obj["item"].(map[string]any); ok {
-					if item["type"] == "function_call" {
-						name, _ := item["name"].(string)
-						args, _ := item["arguments"].(string)
-						callID, _ := item["call_id"].(string)
-						if name != "" {
-							toolCalls = upsertToolCall(toolCalls, ChatToolCall{
-								ID:       callID,
-								Type:     "function",
-								Function: ChatFunctionCall{Name: name, Arguments: args},
-							})
-							finishReason = "tool_calls"
-						}
-					}
-				}
-			case "response.function_call_arguments.delta":
-				delta, _ := obj["delta"].(string)
-				itemID, _ := obj["item_id"].(string)
-				if len(toolCalls) > 0 {
-					for i := range toolCalls {
-						if toolCalls[i].ID == itemID || (itemID == "" && i == len(toolCalls)-1) {
-							toolCalls[i].Function.Arguments += delta
-							finishReason = "tool_calls"
-							break
-						}
-					}
-				}
-			case "response.completed":
-				if resp, ok := obj["response"].(map[string]any); ok {
-					if output, ok := resp["output"].([]any); ok {
-						for _, item := range output {
-							if itemMap, ok := item.(map[string]any); ok && itemMap["type"] == "function_call" {
-								name, _ := itemMap["name"].(string)
-								args, _ := itemMap["arguments"].(string)
-								callID, _ := itemMap["call_id"].(string)
-								if name != "" {
-									toolCalls = upsertToolCall(toolCalls, ChatToolCall{
-										ID:       callID,
-										Type:     "function",
-										Function: ChatFunctionCall{Name: name, Arguments: args},
-									})
-									finishReason = "tool_calls"
-								}
-							}
-						}
-					}
-					if u, ok := resp["usage"].(map[string]any); ok {
-						usage = u
-					}
-				}
-			}
-			return nil
-		})
-
-		msg := ChatMessage{Role: "assistant"}
-		text := strings.Join(textParts, "")
-		if text != "" {
-			msg.Content = text
+		body, err := collectResponsesCompletedJSON(upResp.Body)
+		if err != nil {
+			httpError(w, http.StatusBadGateway, "collect responses: "+err.Error())
+			return
 		}
-		if len(toolCalls) > 0 {
-			msg.ToolCalls = toolCalls
+		chatBody, err := ResponsesNonStreamToChat(body, chatReq.Model)
+		if err != nil {
+			httpError(w, http.StatusBadGateway, "translate responses: "+err.Error())
+			return
 		}
-
-		chatResp := map[string]any{
-			"id":      fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano()),
-			"object":  "chat.completion",
-			"created": time.Now().Unix(),
-			"model":   chatReq.Model,
-			"choices": []map[string]any{{
-				"index":         0,
-				"message":       msg,
-				"finish_reason": finishReason,
-			}},
-		}
-		if usage != nil {
-			inputTokens, _ := usage["input_tokens"].(float64)
-			outputTokens, _ := usage["output_tokens"].(float64)
-			chatResp["usage"] = map[string]any{
-				"prompt_tokens":     int(inputTokens),
-				"completion_tokens": int(outputTokens),
-				"total_tokens":      int(inputTokens + outputTokens),
-			}
-		}
-
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(chatResp)
+		w.Write(chatBody)
 	}
-}
-
-func upsertToolCall(toolCalls []ChatToolCall, tc ChatToolCall) []ChatToolCall {
-	for i := range toolCalls {
-		if tc.ID != "" && toolCalls[i].ID == tc.ID {
-			toolCalls[i] = tc
-			return toolCalls
-		}
-	}
-	return append(toolCalls, tc)
 }

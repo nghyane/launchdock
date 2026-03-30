@@ -76,9 +76,13 @@ func doWithCredentialRetry(pool *providerspkg.Pool, providerName string, cred *a
 	return doWithCredentialRetryMatching(pool, providerName, cred, func(*authpkg.Credential) bool { return true }, attempt)
 }
 
+type retryState struct {
+	refreshedSame bool
+	fallbackTried bool
+}
+
 func doWithCredentialRetryMatching(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, match func(*authpkg.Credential) bool, attempt func(*authpkg.Credential) (*http.Response, error)) (*http.Response, *authpkg.Credential, error) {
-	refreshedSame := false
-	fallbackTried := false
+	state := retryState{}
 
 	for {
 		resp, err := attempt(cred)
@@ -93,37 +97,32 @@ func doWithCredentialRetryMatching(pool *providerspkg.Pool, providerName string,
 		resp.Body.Close()
 
 		if isAuthFailure(providerName, resp.StatusCode, errBody) {
-			if !refreshedSame && cred.AuthType == authpkg.AuthOAuth && cred.RefreshToken != "" {
-				refreshedSame = true
+			if !state.refreshedSame && cred.AuthType == authpkg.AuthOAuth && cred.RefreshToken != "" {
+				state.refreshedSame = true
 				if err := pool.RefreshCredential(cred); err == nil {
 					slog.Warn("auth failure recovered by refresh", "provider", providerName, "credential", cred.Label)
 					continue
 				}
 			}
-			if !fallbackTried {
-				fallbackTried = true
-				pool.Cooldown(cred, 45*time.Second)
-				nextCred, err := pool.PickNextMatching(providerName, cred, match)
-				if err == nil {
-					slog.Warn("retrying with fallback credential after auth failure", "provider", providerName, "credential", cred.Label, "fallback", nextCred.Label)
-					cred = nextCred
-					continue
-				}
+			nextCred, ok := pickFallbackCredential(pool, providerName, cred, match, &state, 45*time.Second, "auth failure")
+			if ok {
+				cred = nextCred
+				continue
 			}
 			return rebuildErrorResponse(resp, errBody), cred, nil
 		}
 
-		if isRetryable(resp.StatusCode) && !fallbackTried {
+		if isRetryable(resp.StatusCode) {
 			slog.Warn("retryable upstream error, trying next credential", "status", resp.StatusCode, "credential", cred.Label, "body", string(errBody))
+			cooldown := 0 * time.Second
 			switch resp.StatusCode {
 			case 429:
-				pool.Cooldown(cred, 60*time.Second)
+				cooldown = 60 * time.Second
 			case 529, 503:
-				pool.Cooldown(cred, 30*time.Second)
+				cooldown = 30 * time.Second
 			}
-			nextCred, err := pool.PickNextMatching(providerName, cred, match)
-			if err == nil {
-				fallbackTried = true
+			nextCred, ok := pickFallbackCredential(pool, providerName, cred, match, &state, cooldown, "retryable upstream error")
+			if ok {
 				cred = nextCred
 				continue
 			}
@@ -131,6 +130,22 @@ func doWithCredentialRetryMatching(pool *providerspkg.Pool, providerName string,
 
 		return rebuildErrorResponse(resp, errBody), cred, nil
 	}
+}
+
+func pickFallbackCredential(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, match func(*authpkg.Credential) bool, state *retryState, cooldown time.Duration, reason string) (*authpkg.Credential, bool) {
+	if state.fallbackTried {
+		return nil, false
+	}
+	state.fallbackTried = true
+	if cooldown > 0 {
+		pool.Cooldown(cred, cooldown)
+	}
+	nextCred, err := pool.PickNextMatching(providerName, cred, match)
+	if err != nil {
+		return nil, false
+	}
+	slog.Warn("retrying with fallback credential", "provider", providerName, "reason", reason, "credential", cred.Label, "fallback", nextCred.Label)
+	return nextCred, true
 }
 
 func ensureOKOrRetryMatching(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, match func(*authpkg.Credential) bool, attempt func(*authpkg.Credential) (*http.Response, error)) (*http.Response, *authpkg.Credential, error) {

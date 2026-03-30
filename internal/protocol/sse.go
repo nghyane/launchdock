@@ -3,7 +3,6 @@ package protocol
 import (
 	"bufio"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -31,8 +30,7 @@ func NewSSEWriter(w http.ResponseWriter) (*SSEWriter, bool) {
 }
 
 func (s *SSEWriter) WriteData(data string) {
-	fmt.Fprintf(s.w, "data: %s\n\n", data)
-	s.flusher.Flush()
+	s.writeDataBytes([]byte(data))
 }
 
 func (s *SSEWriter) WriteJSON(v any) error {
@@ -40,17 +38,32 @@ func (s *SSEWriter) WriteJSON(v any) error {
 	if err != nil {
 		return err
 	}
-	s.WriteData(string(b))
+	s.WriteRawJSON(b)
 	return nil
 }
 
+func (s *SSEWriter) WriteRawJSON(data []byte) {
+	s.writeDataBytes(data)
+}
+
 func (s *SSEWriter) WriteDone() {
-	fmt.Fprint(s.w, "data: [DONE]\n\n")
+	_, _ = s.w.Write([]byte("data: [DONE]\n\n"))
 	s.flusher.Flush()
 }
 
 func (s *SSEWriter) WriteEvent(event, data string) {
-	fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data)
+	_, _ = s.w.Write([]byte("event: "))
+	_, _ = s.w.Write([]byte(event))
+	_, _ = s.w.Write([]byte("\ndata: "))
+	_, _ = s.w.Write([]byte(data))
+	_, _ = s.w.Write([]byte("\n\n"))
+	s.flusher.Flush()
+}
+
+func (s *SSEWriter) writeDataBytes(data []byte) {
+	_, _ = s.w.Write([]byte("data: "))
+	_, _ = s.w.Write(data)
+	_, _ = s.w.Write([]byte("\n\n"))
 	s.flusher.Flush()
 }
 

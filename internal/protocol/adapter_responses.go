@@ -241,9 +241,25 @@ func contentToParts(content any, textType string) []map[string]any {
 	}
 }
 
+type ResponsesToolState struct {
+	ID    string
+	Name  string
+	Type  string
+	Index int
+}
+
+type ResponsesToChatState struct {
+	IsFirst bool
+	Tools   map[string]ResponsesToolState
+}
+
+func NewResponsesToChatState() *ResponsesToChatState {
+	return &ResponsesToChatState{IsFirst: true, Tools: map[string]ResponsesToolState{}}
+}
+
 // ResponsesSSEToChatSSE translates a single Responses API SSE event to Chat Completions SSE chunk.
 // Returns empty string if the event should be skipped.
-func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, created int64, isFirst *bool) string {
+func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, created int64, state *ResponsesToChatState) string {
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(data), &obj); err != nil {
 		return ""
@@ -260,8 +276,8 @@ func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, 
 		if delta == "" {
 			return ""
 		}
-		chunk := buildChatChunk(chatID, model, created, *isFirst, "", delta, nil, nil)
-		*isFirst = false
+		chunk := buildChatChunk(chatID, model, created, state.IsFirst, "", delta, nil, nil)
+		state.IsFirst = false
 		b, _ := json.Marshal(chunk)
 		return string(b)
 
@@ -270,36 +286,62 @@ func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, 
 		if delta == "" {
 			return ""
 		}
-		chunk := buildChatChunk(chatID, model, created, *isFirst, delta, "", nil, nil)
-		*isFirst = false
+		chunk := buildChatChunk(chatID, model, created, state.IsFirst, delta, "", nil, nil)
+		state.IsFirst = false
 		b, _ := json.Marshal(chunk)
 		return string(b)
 
+	case typ == "response.output_item.added":
+		item, _ := obj["item"].(map[string]any)
+		if item != nil && item["type"] == "function_call" {
+			id, _ := item["id"].(string)
+			name, _ := item["name"].(string)
+			if id != "" {
+				state.Tools[id] = ResponsesToolState{ID: id, Name: name, Type: "function", Index: 0}
+				chunk := buildChatChunk(chatID, model, created, state.IsFirst, "", "", []ChatToolCall{{
+					Index: 0,
+					ID:    id,
+					Type:  "function",
+					Function: ChatFunctionCall{
+						Name: name,
+					},
+				}}, nil)
+				state.IsFirst = false
+				b, _ := json.Marshal(chunk)
+				return string(b)
+			}
+		}
+		if state.IsFirst {
+			chunk := buildChatChunk(chatID, model, created, true, "", "", nil, nil)
+			state.IsFirst = false
+			b, _ := json.Marshal(chunk)
+			return string(b)
+		}
+
 	case typ == "response.function_call_arguments.delta":
 		delta, _ := obj["delta"].(string)
-		name, _ := obj["name"].(string)
-		callID, _ := obj["call_id"].(string)
-
+		callID, _ := obj["item_id"].(string)
+		if callID == "" {
+			callID, _ = obj["call_id"].(string)
+		}
+		tool, ok := state.Tools[callID]
 		var tc *ChatToolCall
-		if name != "" || callID != "" {
+		if ok {
 			tc = &ChatToolCall{
-				ID:   callID,
-				Type: "function",
+				Index: tool.Index,
+				ID:    tool.ID,
+				Type:  tool.Type,
 				Function: ChatFunctionCall{
-					Name:      name,
+					Name:      tool.Name,
 					Arguments: delta,
 				},
 			}
 		} else if delta != "" {
-			tc = &ChatToolCall{
-				Function: ChatFunctionCall{
-					Arguments: delta,
-				},
-			}
+			tc = &ChatToolCall{Index: 0, Function: ChatFunctionCall{Arguments: delta}}
 		}
 		if tc != nil {
-			chunk := buildChatChunk(chatID, model, created, *isFirst, "", "", []ChatToolCall{*tc}, nil)
-			*isFirst = false
+			chunk := buildChatChunk(chatID, model, created, state.IsFirst, "", "", []ChatToolCall{*tc}, nil)
+			state.IsFirst = false
 			b, _ := json.Marshal(chunk)
 			return string(b)
 		}
@@ -335,14 +377,6 @@ func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, 
 		b, _ := json.Marshal(chunk)
 		return string(b)
 
-	case typ == "response.output_item.added":
-		// Emit role chunk for first message item
-		if *isFirst {
-			chunk := buildChatChunk(chatID, model, created, true, "", "", nil, nil)
-			*isFirst = false
-			b, _ := json.Marshal(chunk)
-			return string(b)
-		}
 	}
 
 	return ""

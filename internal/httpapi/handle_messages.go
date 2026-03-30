@@ -3,7 +3,6 @@ package httpapi
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -52,8 +51,7 @@ func HandleMessages(pool *Pool, anthropic *AnthropicProvider) http.HandlerFunc {
 
 		// Apply OAuth quirks if needed
 		if cred.AuthType == AuthOAuth {
-			body, _ = PrefixTools(body, "mcp_")
-			body, _ = EnsureOAuthRequirements(body)
+			body, _ = PrepareAnthropicOAuthBody(body, "mcp_")
 		}
 
 		upResp, cred, err := ensureOKOrRetry(pool, "anthropic", cred, func(current *Credential) (*http.Response, error) {
@@ -112,9 +110,9 @@ func relayClaudeMessagesStream(w http.ResponseWriter, upResp *http.Response, cre
 		}
 
 		if ev.Event != "" {
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, data)
+			writeSSEMessage(w, ev.Event, data)
 		} else {
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			writeSSEMessage(w, "", data)
 		}
 		flusher.Flush()
 		return nil
@@ -135,4 +133,15 @@ func relayClaudeMessagesNonStream(w http.ResponseWriter, upResp *http.Response, 
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(body)
+}
+
+func writeSSEMessage(w http.ResponseWriter, event, data string) {
+	if event != "" {
+		_, _ = w.Write([]byte("event: "))
+		_, _ = w.Write([]byte(event))
+		_, _ = w.Write([]byte("\n"))
+	}
+	_, _ = w.Write([]byte("data: "))
+	_, _ = w.Write([]byte(data))
+	_, _ = w.Write([]byte("\n\n"))
 }

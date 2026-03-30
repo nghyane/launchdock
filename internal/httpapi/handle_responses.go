@@ -61,25 +61,21 @@ func HandleResponses(pool *Pool, openai *OpenAIProvider, anthropic *AnthropicPro
 			"stream", peek.Stream,
 		)
 
-		// ChatGPT backend requires "instructions" field
+		requestBody := body
 		if cred.AuthType == AuthOAuth {
-			body = ensureResponsesInstructions(body)
-			body = ensureResponsesInputList(body)
+			requestBody = prepareResponsesOAuthBody(body, !peek.Stream)
 		}
 
 		upResp, cred, err := ensureOKOrRetryMatching(pool, "openai", cred, credMatcher, func(current *Credential) (*http.Response, error) {
 			var upstreamURL string
-			requestBody := body
+			bodyToSend := requestBody
 			if current.AuthType == AuthOAuth {
 				upstreamURL = openai.ChatGPTBaseURL() + "/responses"
-				if !peek.Stream {
-					requestBody = ensureResponsesStream(body)
-				}
 			} else {
 				upstreamURL = openai.BaseURL() + "/v1/responses"
 			}
 			upReq, err := http.NewRequestWithContext(r.Context(), "POST",
-				upstreamURL, bytes.NewReader(requestBody))
+				upstreamURL, bytes.NewReader(bodyToSend))
 			if err != nil {
 				return nil, err
 			}
@@ -98,7 +94,11 @@ func HandleResponses(pool *Pool, openai *OpenAIProvider, anthropic *AnthropicPro
 				}
 			}
 
-			return StreamClient.Do(upReq)
+			client := APIClient
+			if current.AuthType == AuthOAuth || peek.Stream {
+				client = StreamClient
+			}
+			return client.Do(upReq)
 		})
 		if err != nil {
 			httpError(w, http.StatusBadGateway, "upstream: "+err.Error())
@@ -142,8 +142,7 @@ func handleClaudeResponses(w http.ResponseWriter, r *http.Request, body []byte, 
 		return
 	}
 	if cred.AuthType == AuthOAuth {
-		upstreamBody, _ = PrefixTools(upstreamBody, "mcp_")
-		upstreamBody, _ = EnsureOAuthRequirements(upstreamBody)
+		upstreamBody, _ = PrepareAnthropicOAuthBody(upstreamBody, "mcp_")
 	}
 
 	upResp, cred, err := sendWithRetry(r, anthropic, pool, cred, chatReq.Model, upstreamBody, "/v1/messages")
@@ -267,7 +266,7 @@ func relayClaudeResponsesStream(w http.ResponseWriter, upResp *http.Response, mo
 		payload["sequence_number"] = state.sequence
 		state.sequence++
 		b, _ := json.Marshal(payload)
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, string(b))
+		writeSSEMessage(w, event, string(b))
 		flusher.Flush()
 	}
 
@@ -441,92 +440,6 @@ func asString(v any) string {
 	return s
 }
 
-// ensureResponsesInstructions adds default instructions if missing.
-// ChatGPT backend requires this field.
-func ensureResponsesInstructions(body []byte) []byte {
-	var req map[string]any
-	if err := json.Unmarshal(body, &req); err != nil {
-		return body
-	}
-	if _, ok := req["instructions"]; !ok {
-		req["instructions"] = "You are a helpful assistant."
-	}
-	req["store"] = false
-
-	// Codex-optimal defaults
-	if _, ok := req["tool_choice"]; !ok {
-		if tools, ok := req["tools"]; ok {
-			if toolsArr, ok := tools.([]any); ok && len(toolsArr) > 0 {
-				req["tool_choice"] = "auto"
-				req["parallel_tool_calls"] = true
-			}
-		}
-	}
-	out, err := json.Marshal(req)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
-func ensureResponsesStream(body []byte) []byte {
-	var req map[string]any
-	if err := json.Unmarshal(body, &req); err != nil {
-		return body
-	}
-	req["stream"] = true
-	out, err := json.Marshal(req)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
-func ensureResponsesInputList(body []byte) []byte {
-	var req map[string]any
-	if err := json.Unmarshal(body, &req); err != nil {
-		return body
-	}
-
-	input, ok := req["input"]
-	if !ok || input == nil {
-		return body
-	}
-
-	switch v := input.(type) {
-	case []any:
-		return body
-	case string:
-		req["input"] = []map[string]any{{
-			"role": "user",
-			"content": []map[string]any{{
-				"type": "input_text",
-				"text": v,
-			}},
-		}}
-	case map[string]any:
-		if _, hasRole := v["role"]; hasRole {
-			req["input"] = []any{v}
-		} else if text, _ := v["text"].(string); text != "" {
-			req["input"] = []map[string]any{{
-				"role": "user",
-				"content": []map[string]any{{
-					"type": "input_text",
-					"text": text,
-				}},
-			}}
-		}
-	default:
-		return body
-	}
-
-	out, err := json.Marshal(req)
-	if err != nil {
-		return body
-	}
-	return out
-}
-
 // relayResponsesStream forwards Responses API SSE as-is.
 func relayResponsesStream(w http.ResponseWriter, upResp *http.Response) {
 	flusher, ok := w.(http.Flusher)
@@ -550,9 +463,9 @@ func relayResponsesStream(w http.ResponseWriter, upResp *http.Response) {
 	// Passthrough SSE — no translation needed
 	ReadSSE(upResp.Body, func(ev SSEEvent) error {
 		if ev.Event != "" {
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Event, ev.Data)
+			writeSSEMessage(w, ev.Event, ev.Data)
 		} else {
-			fmt.Fprintf(w, "data: %s\n\n", ev.Data)
+			writeSSEMessage(w, "", ev.Data)
 		}
 		flusher.Flush()
 		return nil
@@ -576,24 +489,38 @@ func relayResponsesNonStream(w http.ResponseWriter, upResp *http.Response) {
 }
 
 func relayResponsesCollectedNonStream(w http.ResponseWriter, upResp *http.Response) {
-	var finalResponse any
-	ReadSSE(upResp.Body, func(ev SSEEvent) error {
-		var obj map[string]any
-		if json.Unmarshal([]byte(ev.Data), &obj) != nil {
-			return nil
-		}
-		if typ, _ := obj["type"].(string); typ == "response.completed" {
-			finalResponse = obj["response"]
-		}
-		return nil
-	})
-	if finalResponse == nil {
-		httpError(w, http.StatusBadGateway, "missing response.completed event")
+	body, err := collectResponsesCompletedJSON(upResp.Body)
+	if err != nil {
+		httpError(w, http.StatusBadGateway, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if v := upResp.Header.Get("x-codex-turn-state"); v != "" {
 		w.Header().Set("x-codex-turn-state", v)
 	}
-	json.NewEncoder(w).Encode(finalResponse)
+	w.Write(body)
+}
+
+func collectResponsesCompletedJSON(r io.Reader) ([]byte, error) {
+	var finalResponse json.RawMessage
+	err := ReadSSE(r, func(ev SSEEvent) error {
+		var obj struct {
+			Type     string          `json:"type"`
+			Response json.RawMessage `json:"response"`
+		}
+		if json.Unmarshal([]byte(ev.Data), &obj) != nil {
+			return nil
+		}
+		if obj.Type == "response.completed" || obj.Type == "response.done" {
+			finalResponse = append(finalResponse[:0], obj.Response...)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(finalResponse) == 0 {
+		return nil, fmt.Errorf("missing response.completed event")
+	}
+	return finalResponse, nil
 }

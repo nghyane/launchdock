@@ -120,13 +120,28 @@ func PrefixTools(body []byte, prefix string) ([]byte, error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body, err
 	}
+	transformToolNames(req, prefix, false)
+	return json.Marshal(req)
+}
 
+// PrepareOAuthBody applies Claude OAuth request rewrites in a single pass.
+func PrepareOAuthBody(body []byte, prefix string) ([]byte, error) {
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		return body, err
+	}
+	transformToolNames(req, prefix, false)
+	ensureOAuthRequirementsMap(req)
+	return json.Marshal(req)
+}
+
+func transformToolNames(req map[string]any, prefix string, strip bool) {
 	// Prefix tool definitions
 	if tools, ok := req["tools"].([]any); ok {
 		for _, t := range tools {
 			if tm, ok := t.(map[string]any); ok {
-				if name, ok := tm["name"].(string); ok && !strings.HasPrefix(name, prefix) {
-					tm["name"] = prefix + name
+				if name, ok := tm["name"].(string); ok {
+					tm["name"] = maybeTransformToolName(name, prefix, strip)
 				}
 			}
 		}
@@ -149,8 +164,8 @@ func PrefixTools(body []byte, prefix string) ([]byte, error) {
 					continue
 				}
 				if cm["type"] == "tool_use" {
-					if name, ok := cm["name"].(string); ok && !strings.HasPrefix(name, prefix) {
-						cm["name"] = prefix + name
+					if name, ok := cm["name"].(string); ok {
+						cm["name"] = maybeTransformToolName(name, prefix, strip)
 					}
 				}
 			}
@@ -166,8 +181,8 @@ func PrefixTools(body []byte, prefix string) ([]byte, error) {
 					if !ok {
 						continue
 					}
-					if name, ok := fn["name"].(string); ok && !strings.HasPrefix(name, prefix) {
-						fn["name"] = prefix + name
+					if name, ok := fn["name"].(string); ok {
+						fn["name"] = maybeTransformToolName(name, prefix, strip)
 					}
 				}
 			}
@@ -177,13 +192,21 @@ func PrefixTools(body []byte, prefix string) ([]byte, error) {
 	// Prefix explicit tool_choice
 	if tc, ok := req["tool_choice"].(map[string]any); ok {
 		if tc["type"] == "tool" {
-			if name, ok := tc["name"].(string); ok && !strings.HasPrefix(name, prefix) {
-				tc["name"] = prefix + name
+			if name, ok := tc["name"].(string); ok {
+				tc["name"] = maybeTransformToolName(name, prefix, strip)
 			}
 		}
 	}
+}
 
-	return json.Marshal(req)
+func maybeTransformToolName(name, prefix string, strip bool) string {
+	if strip {
+		return strings.TrimPrefix(name, prefix)
+	}
+	if !strings.HasPrefix(name, prefix) {
+		return prefix + name
+	}
+	return name
 }
 
 // StripToolPrefix removes prefix from tool names in response data.
@@ -198,7 +221,11 @@ func EnsureOAuthRequirements(body []byte) ([]byte, error) {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return body, err
 	}
+	ensureOAuthRequirementsMap(req)
+	return json.Marshal(req)
+}
 
+func ensureOAuthRequirementsMap(req map[string]any) {
 	// System prompt — exact string from Claude Code binary
 	const identity = "You are Claude Code, Anthropic's official CLI for Claude."
 
@@ -294,8 +321,6 @@ func EnsureOAuthRequirements(body []byte) ([]byte, error) {
 			},
 		}}
 	}
-
-	return json.Marshal(req)
 }
 
 func firstUserText(req map[string]any) string {
