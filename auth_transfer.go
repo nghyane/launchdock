@@ -24,6 +24,77 @@ type authExportPayload struct {
 	Credentials []authpkg.ConfigCredential `json:"credentials"`
 }
 
+func exportableCredentials(ids []string) ([]authpkg.ConfigCredential, error) {
+	lookup := map[string]bool{}
+	if len(ids) > 0 {
+		for _, id := range ids {
+			lookup[id] = true
+		}
+	}
+
+	var out []authpkg.ConfigCredential
+	seen := map[string]bool{}
+
+	appendCred := func(cc authpkg.ConfigCredential) {
+		key := cc.Provider + "|" + cc.AccountID + "|" + cc.Email + "|" + cc.Label
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		out = append(out, cc)
+	}
+
+	// Managed credentials first.
+	managed, err := managedConfigCredentials(nil)
+	if err == nil {
+		for _, cc := range managed {
+			if len(lookup) > 0 && !lookup[cc.ID] {
+				continue
+			}
+			appendCred(cc)
+			delete(lookup, cc.ID)
+		}
+	}
+
+	// Export local OAuth credentials too.
+	for _, cred := range authpkg.LoadAllCredentials() {
+		if cred.AuthType != authpkg.AuthOAuth {
+			continue
+		}
+		if cred.RefreshToken == "" {
+			continue
+		}
+		if len(lookup) > 0 && cred.ID != "" && !lookup[cred.ID] {
+			continue
+		}
+		appendCred(authpkg.ConfigCredential{
+			ID:           authpkg.GenerateCredentialID(),
+			Label:        cred.Label,
+			Provider:     cred.Provider,
+			Kind:         cred.Kind,
+			RefreshToken: cred.RefreshToken,
+			AccountID:    cred.AccountID,
+			Email:        cred.Email,
+			Disabled:     false,
+		})
+		if cred.ID != "" {
+			delete(lookup, cred.ID)
+		}
+	}
+
+	if len(ids) > 0 && len(lookup) > 0 {
+		var missing []string
+		for id := range lookup {
+			missing = append(missing, id)
+		}
+		return nil, fmt.Errorf("unknown credential ids: %s", strings.Join(missing, ", "))
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no credentials to export")
+	}
+	return out, nil
+}
+
 func managedConfigCredentials(ids []string) ([]authpkg.ConfigCredential, error) {
 	cfg := authpkg.LoadConfig()
 	if len(ids) == 0 {
@@ -54,7 +125,7 @@ func managedConfigCredentials(ids []string) ([]authpkg.ConfigCredential, error) 
 }
 
 func exportManagedCredentials(ids []string) ([]byte, error) {
-	creds, err := managedConfigCredentials(ids)
+	creds, err := exportableCredentials(ids)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +223,7 @@ func handleAuthPush() {
 		fmt.Fprintf(os.Stderr, "Push failed: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Pushed managed credential(s) to %s\n", target)
+	fmt.Printf("Pushed credential(s) to %s\n", target)
 }
 
 func ensureRemoteLaunchdock(target string) error {

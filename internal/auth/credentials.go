@@ -70,6 +70,7 @@ func (c *Credential) IsExpired() bool {
 // --- Load from macOS Keychain (Claude OAuth) ---
 
 func LoadFromKeychain() ([]Credential, error) {
+	profile := LoadClaudeProfile()
 	// Claude Code stores OAuth tokens in macOS Keychain:
 	//   "Claude Code-credentials"          — primary account
 	//   "Claude Code-credentials-<hex>"    — additional accounts
@@ -77,7 +78,7 @@ func LoadFromKeychain() ([]Credential, error) {
 
 	var creds []Credential
 	for _, service := range services {
-		cred, err := loadKeychainEntry(service)
+		cred, err := loadKeychainEntry(service, profile)
 		if err != nil {
 			slog.Debug("keychain entry not found", "service", service, "error", err)
 			continue
@@ -91,7 +92,7 @@ func LoadFromKeychain() ([]Credential, error) {
 		if home != "" {
 			credFile := filepath.Join(home, ".claude", ".credentials.json")
 			if data, err := os.ReadFile(credFile); err == nil {
-				if cred := parseClaudeCredentialJSON(data, "file:"+credFile); cred != nil {
+				if cred := parseClaudeCredentialJSON(data, "file:"+credFile, profile); cred != nil {
 					creds = append(creds, *cred)
 				}
 			}
@@ -135,7 +136,7 @@ func listClaudeKeychainServices() []string {
 	return services
 }
 
-func loadKeychainEntry(service string) (*Credential, error) {
+func loadKeychainEntry(service string, profile ClaudeProfile) (*Credential, error) {
 	cmd := exec.Command("security", "find-generic-password",
 		"-s", service,
 		"-w", // password only
@@ -191,6 +192,7 @@ func loadKeychainEntry(service string) (*Credential, error) {
 		Source:       "keychain:" + service,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
+		Email:        profile.Email,
 		ExpiresAt:    expiresAt,
 	}, nil
 }
@@ -342,7 +344,7 @@ func RefreshViaCLI(command string) error {
 // --- Helpers ---
 
 // parseClaudeCredentialJSON parses a ~/.claude/.credentials.json file.
-func parseClaudeCredentialJSON(data []byte, source string) *Credential {
+func parseClaudeCredentialJSON(data []byte, source string, profile ClaudeProfile) *Credential {
 	var wrapper struct {
 		ClaudeAiOauth *struct {
 			AccessToken  string      `json:"accessToken"`
@@ -368,6 +370,7 @@ func parseClaudeCredentialJSON(data []byte, source string) *Credential {
 		Source:       source,
 		AccessToken:  oauth.AccessToken,
 		RefreshToken: oauth.RefreshToken,
+		Email:        profile.Email,
 		ExpiresAt:    expiresAt,
 	}
 }
