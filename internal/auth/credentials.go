@@ -192,6 +192,7 @@ func loadKeychainEntry(service string, profile ClaudeProfile) (*Credential, erro
 		Source:       "keychain:" + service,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
+		AccountID:    profile.AccountID,
 		Email:        profile.Email,
 		ExpiresAt:    expiresAt,
 	}, nil
@@ -370,6 +371,7 @@ func parseClaudeCredentialJSON(data []byte, source string, profile ClaudeProfile
 		Source:       source,
 		AccessToken:  oauth.AccessToken,
 		RefreshToken: oauth.RefreshToken,
+		AccountID:    profile.AccountID,
 		Email:        profile.Email,
 		ExpiresAt:    expiresAt,
 	}

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	authpkg "github.com/nghiahoang/launchdock/internal/auth"
 )
@@ -165,6 +166,14 @@ func managedCredentialView(cc authpkg.ConfigCredential) CredentialView {
 		v.StatusMessage = "missing refresh token"
 		return v
 	}
+	if cc.AccessToken != "" {
+		exp := parseManagedExpiresAt(cc.ExpiresAt)
+		if exp.IsZero() || exp.After(time.Now().Add(30*time.Second)) {
+			v.Status = "healthy"
+			v.StatusMessage = "access token available"
+			return v
+		}
+	}
 	var err error
 	if cc.Provider == "anthropic" {
 		_, _, _, err = authpkg.RefreshClaudeOAuth(cc.RefreshToken)
@@ -179,6 +188,17 @@ func managedCredentialView(cc authpkg.ConfigCredential) CredentialView {
 	v.Status = "healthy"
 	v.StatusMessage = "refreshable"
 	return v
+}
+
+func parseManagedExpiresAt(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
 }
 
 func compatibleToolsForProvider(provider string) []string {

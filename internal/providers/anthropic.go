@@ -83,7 +83,7 @@ func buildBetas(model string) []string {
 }
 
 // computeCCH replicates PL6/w2q from Claude Code binary.
-// Hash = sha256(salt + chars_at_positions_4_7_20_of_first_user_message + version)[:3]
+// Hash = sha256(salt + chars_at_positions_4_7_20_of_first_user_message + version)[:5]
 func computeCCH(firstUserContent string) string {
 	const salt = "59cf53e54c78"
 	chars := ""
@@ -97,7 +97,7 @@ func computeCCH(firstUserContent string) string {
 	}
 	input := salt + chars + cliVersion
 	h := sha256.Sum256([]byte(input))
-	return hex.EncodeToString(h[:])[:3]
+	return hex.EncodeToString(h[:])[:5]
 }
 
 func applyOAuthHeaders(req *http.Request, model string) {
@@ -107,13 +107,10 @@ func applyOAuthHeaders(req *http.Request, model string) {
 
 	// User-Agent — exact match Claude Code v2.1.81
 	req.Header.Set("User-Agent", "claude-cli/"+cliVersion+" (external, cli)")
+	req.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 
 	// x-app header
 	req.Header.Set("x-app", "cli")
-
-	// Billing/attribution header — exact format from DDT() in binary
-	req.Header.Set("x-anthropic-billing-header",
-		fmt.Sprintf("cc_version=%s.%s; cc_entrypoint=cli; cch=00000;", cliVersion, model))
 }
 
 // PrefixTools adds "mcp_" prefix to all tool names in the request body.
@@ -222,10 +219,16 @@ func EnsureOAuthRequirements(body []byte) ([]byte, error) {
 	}
 
 	if !hasIdentity {
+		billingLine := fmt.Sprintf("x-anthropic-billing-header: cc_version=%s; cc_entrypoint=cli; cch=%s;", cliVersion, computeCCH(firstUserText(req)))
 		// Prepend identity as first system block (array format like Claude Code does)
 		// Add cache_control on system prompt for prompt caching
 		existing := req["system"]
 		var systemBlocks []map[string]any
+		systemBlocks = append(systemBlocks, map[string]any{
+			"type":          "text",
+			"text":          billingLine,
+			"cache_control": map[string]any{"type": "ephemeral", "ttl": "1h"},
+		})
 		systemBlocks = append(systemBlocks, map[string]any{
 			"type":          "text",
 			"text":          identity,
@@ -293,6 +296,33 @@ func EnsureOAuthRequirements(body []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(req)
+}
+
+func firstUserText(req map[string]any) string {
+	msgs, _ := req["messages"].([]any)
+	for _, item := range msgs {
+		msg, _ := item.(map[string]any)
+		if msg == nil || msg["role"] != "user" {
+			continue
+		}
+		switch c := msg["content"].(type) {
+		case string:
+			return c
+		case []any:
+			for _, part := range c {
+				pm, _ := part.(map[string]any)
+				if pm == nil {
+					continue
+				}
+				if pm["type"] == "text" {
+					if text, _ := pm["text"].(string); text != "" {
+						return text
+					}
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // InjectSystemPrompt prepends a system prompt to the Claude request.
