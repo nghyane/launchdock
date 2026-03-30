@@ -72,6 +72,8 @@ func exportableCredentials(ids []string) ([]authpkg.ConfigCredential, error) {
 			Label:        cred.Label,
 			Provider:     cred.Provider,
 			Kind:         cred.Kind,
+			AccessToken:  cred.AccessToken,
+			ExpiresAt:    authpkg.FormatExpiresAt(cred.ExpiresAt),
 			RefreshToken: cred.RefreshToken,
 			AccountID:    cred.AccountID,
 			Email:        cred.Email,

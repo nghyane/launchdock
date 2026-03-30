@@ -308,6 +308,8 @@ type ConfigCredential struct {
 	Label        string `json:"label"`
 	Provider     string `json:"provider"`
 	Kind         string `json:"kind,omitempty"`
+	AccessToken  string `json:"access_token,omitempty"`
+	ExpiresAt    string `json:"expires_at,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	APIKey       string `json:"api_key,omitempty"`
 	AccountID    string `json:"account_id,omitempty"`
@@ -370,6 +372,10 @@ func SaveCredentialToConfig(cred *Credential) error {
 		cfg.Credentials[match].Label = cred.Label
 		cfg.Credentials[match].Provider = provider
 		cfg.Credentials[match].Kind = cred.Kind
+		cfg.Credentials[match].AccessToken = cred.AccessToken
+		if !cred.ExpiresAt.IsZero() {
+			cfg.Credentials[match].ExpiresAt = cred.ExpiresAt.Format(time.RFC3339)
+		}
 		cfg.Credentials[match].RefreshToken = cred.RefreshToken
 		cfg.Credentials[match].APIKey = cred.APIKey
 		cfg.Credentials[match].AccountID = cred.AccountID
@@ -384,6 +390,8 @@ func SaveCredentialToConfig(cred *Credential) error {
 			Label:        cred.Label,
 			Provider:     provider,
 			Kind:         cred.Kind,
+			AccessToken:  cred.AccessToken,
+			ExpiresAt:    FormatExpiresAt(cred.ExpiresAt),
 			RefreshToken: cred.RefreshToken,
 			APIKey:       cred.APIKey,
 			AccountID:    cred.AccountID,
@@ -500,6 +508,27 @@ func LoadFromConfig() []Credential {
 				APIKey:   cc.APIKey,
 			})
 		} else if cc.RefreshToken != "" {
+			if cc.AccessToken != "" {
+				exp := parseConfigExpiresAt(cc.ExpiresAt)
+				cred := Credential{
+					ID:           cc.ID,
+					Provider:     provider,
+					AuthType:     AuthOAuth,
+					Label:        cc.Label,
+					Source:       "config:" + ConfigPath(),
+					Kind:         cc.Kind,
+					Managed:      true,
+					AccessToken:  cc.AccessToken,
+					RefreshToken: cc.RefreshToken,
+					AccountID:    cc.AccountID,
+					Email:        cc.Email,
+					ExpiresAt:    exp,
+				}
+				if !cred.IsExpired() {
+					creds = append(creds, cred)
+					continue
+				}
+			}
 			// Try refresh immediately to get access token
 			var at, rt string
 			var exp time.Time
@@ -570,6 +599,24 @@ func IsTerminalOpenAIRefreshError(err error) bool {
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "refresh_token_reused") ||
 		strings.Contains(msg, "already been used to generate a new access token")
+}
+
+func parseConfigExpiresAt(v string) time.Time {
+	if v == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func FormatExpiresAt(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }
 
 // --- PKCE helpers ---
