@@ -10,6 +10,13 @@ import (
 	"unsafe"
 )
 
+type winsize struct {
+	Row    uint16
+	Col    uint16
+	Xpixel uint16
+	Ypixel uint16
+}
+
 // --- ANSI helpers ---
 
 const (
@@ -360,4 +367,13 @@ func runConfirm(prompt string) bool {
 func isTerminal(fd int) bool {
 	_, err := tcGet(fd)
 	return err == nil
+}
+
+func getTerminalSize(fd int) (width int, height int, err error) {
+	ws := &winsize{}
+	_, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(ws)), 0, 0, 0)
+	if errno != 0 {
+		return 0, 0, errno
+	}
+	return int(ws.Col), int(ws.Row), nil
 }

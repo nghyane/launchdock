@@ -287,6 +287,7 @@ func exchangeOpenAICodeForTokens(code, verifier, redirectURI, label string) (*Cr
 		AuthType:     AuthOAuth,
 		Label:        label,
 		Source:       "oauth:launchdock",
+		Kind:         "codex_chatgpt",
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
 		AccountID:    accountID,
@@ -306,6 +307,7 @@ type ConfigCredential struct {
 	ID           string `json:"id,omitempty"`
 	Label        string `json:"label"`
 	Provider     string `json:"provider"`
+	Kind         string `json:"kind,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
 	APIKey       string `json:"api_key,omitempty"`
 	AccountID    string `json:"account_id,omitempty"`
@@ -349,19 +351,50 @@ func SaveConfig(cfg *Config) error {
 
 func SaveCredentialToConfig(cred *Credential) error {
 	cfg := LoadConfig()
-	cfg.Credentials = append(cfg.Credentials, ConfigCredential{
-		ID:           GenerateCredentialID(),
-		Label:        cred.Label,
-		Provider:     cred.Provider,
-		RefreshToken: cred.RefreshToken,
-		APIKey:       cred.APIKey,
-		AccountID:    cred.AccountID,
-		Email:        cred.Email,
-	})
+	provider := normalizeProvider(cred.Provider)
+	match := -1
+	for i := range cfg.Credentials {
+		cc := cfg.Credentials[i]
+		if normalizeProvider(cc.Provider) != provider {
+			continue
+		}
+		if cred.AccountID != "" && cc.AccountID != "" && cc.AccountID == cred.AccountID {
+			match = i
+			break
+		}
+		if match == -1 && cred.Email != "" && cc.Email != "" && strings.EqualFold(cc.Email, cred.Email) {
+			match = i
+		}
+	}
+	if match >= 0 {
+		cfg.Credentials[match].Label = cred.Label
+		cfg.Credentials[match].Provider = provider
+		cfg.Credentials[match].Kind = cred.Kind
+		cfg.Credentials[match].RefreshToken = cred.RefreshToken
+		cfg.Credentials[match].APIKey = cred.APIKey
+		cfg.Credentials[match].AccountID = cred.AccountID
+		cfg.Credentials[match].Email = cred.Email
+		cfg.Credentials[match].Disabled = false
+		if cfg.Credentials[match].ID == "" {
+			cfg.Credentials[match].ID = GenerateCredentialID()
+		}
+	} else {
+		cfg.Credentials = append(cfg.Credentials, ConfigCredential{
+			ID:           GenerateCredentialID(),
+			Label:        cred.Label,
+			Provider:     provider,
+			Kind:         cred.Kind,
+			RefreshToken: cred.RefreshToken,
+			APIKey:       cred.APIKey,
+			AccountID:    cred.AccountID,
+			Email:        cred.Email,
+		})
+	}
 	return SaveConfig(cfg)
 }
 
 func SaveAPIKeyToConfig(provider, label, apiKey string) error {
+	provider = normalizeProvider(provider)
 	if strings.TrimSpace(apiKey) == "" {
 		return fmt.Errorf("api key is empty")
 	}
@@ -411,6 +444,17 @@ func ToggleConfigCredentialDisabled(id string) error {
 	return fmt.Errorf("credential not found")
 }
 
+func SetConfigCredentialDisabled(id string, disabled bool) error {
+	cfg := LoadConfig()
+	for i := range cfg.Credentials {
+		if cfg.Credentials[i].ID == id {
+			cfg.Credentials[i].Disabled = disabled
+			return SaveConfig(cfg)
+		}
+	}
+	return fmt.Errorf("credential not found")
+}
+
 func PersistManagedCredentialState(id, refreshToken, accountID, email string) error {
 	cfg := LoadConfig()
 	for i := range cfg.Credentials {
@@ -439,13 +483,18 @@ func LoadFromConfig() []Credential {
 		if cc.Disabled {
 			continue
 		}
+		provider := normalizeProvider(cc.Provider)
 		if cc.APIKey != "" {
+			if provider == "anthropic" {
+				continue
+			}
 			creds = append(creds, Credential{
 				ID:       cc.ID,
-				Provider: cc.Provider,
+				Provider: provider,
 				AuthType: AuthAPIKey,
 				Label:    cc.Label,
 				Source:   "config:" + ConfigPath(),
+				Kind:     cc.Kind,
 				Managed:  true,
 				Email:    cc.Email,
 				APIKey:   cc.APIKey,
@@ -456,21 +505,30 @@ func LoadFromConfig() []Credential {
 			var exp time.Time
 			var err error
 
-			if cc.Provider == "anthropic" {
+			if provider == "anthropic" {
 				at, rt, exp, err = RefreshClaudeOAuth(cc.RefreshToken)
-			} else if cc.Provider == "openai" {
+			} else if provider == "openai" {
 				at, rt, exp, err = RefreshOpenAIOAuth(cc.RefreshToken)
 			}
 
 			if err != nil {
 				slog.Warn("config credential refresh failed", "label", cc.Label, "error", err)
+				if provider == "openai" && cc.ID != "" && IsTerminalOpenAIRefreshError(err) {
+					if derr := SetConfigCredentialDisabled(cc.ID, true); derr != nil {
+						slog.Warn("disable stale OpenAI credential failed", "label", cc.Label, "id", cc.ID, "error", derr)
+					} else {
+						slog.Warn("disabled stale OpenAI credential", "label", cc.Label, "id", cc.ID)
+					}
+					continue
+				}
 				// Store with refresh token anyway — will retry later
 				creds = append(creds, Credential{
 					ID:           cc.ID,
-					Provider:     cc.Provider,
+					Provider:     provider,
 					AuthType:     AuthOAuth,
 					Label:        cc.Label,
 					Source:       "config:" + ConfigPath(),
+					Kind:         cc.Kind,
 					Managed:      true,
 					RefreshToken: cc.RefreshToken,
 					AccountID:    cc.AccountID,
@@ -479,10 +537,11 @@ func LoadFromConfig() []Credential {
 			} else {
 				creds = append(creds, Credential{
 					ID:           cc.ID,
-					Provider:     cc.Provider,
+					Provider:     provider,
 					AuthType:     AuthOAuth,
 					Label:        cc.Label,
 					Source:       "config:" + ConfigPath(),
+					Kind:         cc.Kind,
 					Managed:      true,
 					AccessToken:  at,
 					RefreshToken: rt,
@@ -494,6 +553,23 @@ func LoadFromConfig() []Credential {
 		}
 	}
 	return creds
+}
+
+func normalizeProvider(provider string) string {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "claude", "anthropic":
+		return "anthropic"
+	case "codex", "openai":
+		return "openai"
+	default:
+		return strings.ToLower(strings.TrimSpace(provider))
+	}
+}
+
+func IsTerminalOpenAIRefreshError(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "refresh_token_reused") ||
+		strings.Contains(msg, "already been used to generate a new access token")
 }
 
 // --- PKCE helpers ---

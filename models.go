@@ -75,22 +75,7 @@ func discoveredProviders(cfg LaunchConfig) []string {
 }
 
 func resolveLaunchConfig() LaunchConfig {
-	port := "8090"
-	for i, arg := range os.Args {
-		if arg == "--port" && i+1 < len(os.Args) {
-			port = os.Args[i+1]
-		}
-	}
-	if p := os.Getenv("PORT"); p != "" {
-		port = p
-	}
-
-	raw := fmt.Sprintf("http://localhost:%s", port)
-	cfg := LaunchConfig{
-		BaseURL: raw + "/v1",
-		RawURL:  raw,
-		APIKey:  "launchdock",
-	}
+	cfg := resolveRuntimeConfig()
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelError,
@@ -108,7 +93,32 @@ func resolveLaunchConfig() LaunchConfig {
 		owner, _ := m["owned_by"].(string)
 		if id != "" {
 			cfg.Models = append(cfg.Models, LaunchModel{ID: id, Provider: owner})
+			if owner == "anthropic" {
+				switch id {
+				case "claude-opus-4-6", "claude-sonnet-4-6":
+					cfg.Models = append(cfg.Models, LaunchModel{ID: id + "-thinking", Provider: owner})
+				}
+			}
 		}
 	}
 	return cfg
+}
+
+func resolveRuntimeConfig() LaunchConfig {
+	port := "8090"
+	for i, arg := range os.Args {
+		if arg == "--port" && i+1 < len(os.Args) {
+			port = os.Args[i+1]
+		}
+	}
+	if p := os.Getenv("PORT"); p != "" {
+		port = p
+	}
+
+	raw := fmt.Sprintf("http://localhost:%s", port)
+	return LaunchConfig{
+		BaseURL: raw + "/v1",
+		RawURL:  raw,
+		APIKey:  "launchdock",
+	}
 }

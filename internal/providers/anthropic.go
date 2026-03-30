@@ -157,6 +157,23 @@ func PrefixTools(body []byte, prefix string) ([]byte, error) {
 					}
 				}
 			}
+
+			// Prefix assistant tool_calls in OpenAI-style chat payloads before translation.
+			if toolCalls, ok := mm["tool_calls"].([]any); ok {
+				for _, tc := range toolCalls {
+					tcm, ok := tc.(map[string]any)
+					if !ok {
+						continue
+					}
+					fn, ok := tcm["function"].(map[string]any)
+					if !ok {
+						continue
+					}
+					if name, ok := fn["name"].(string); ok && !strings.HasPrefix(name, prefix) {
+						fn["name"] = prefix + name
+					}
+				}
+			}
 		}
 	}
 

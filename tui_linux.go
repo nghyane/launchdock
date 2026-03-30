@@ -10,6 +10,13 @@ import (
 	"unsafe"
 )
 
+type winsize struct {
+	Row    uint16
+	Col    uint16
+	Xpixel uint16
+	Ypixel uint16
+}
+
 // --- ANSI helpers ---
 
 const (
@@ -29,8 +36,9 @@ const (
 type termios syscall.Termios
 
 const (
-	ioctlTCGETS = 0x5401
-	ioctlTCSETS = 0x5402
+	ioctlTCGETS     = 0x5401
+	ioctlTCSETS     = 0x5402
+	ioctlTIOCGWINSZ = 0x5413
 )
 
 func tcGet(fd int) (*termios, error) {
@@ -87,6 +95,15 @@ func readKey(fd int) (byte, bool) {
 		return buf[2], true
 	}
 	return buf[0], false
+}
+
+func getTerminalSize(fd int) (width int, height int, err error) {
+	ws := &winsize{}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd), uintptr(ioctlTIOCGWINSZ), uintptr(unsafe.Pointer(ws)))
+	if errno != 0 {
+		return 0, 0, errno
+	}
+	return int(ws.Col), int(ws.Row), nil
 }
 
 // --- Checkbox multi-select ---

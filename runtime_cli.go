@@ -10,7 +10,7 @@ import (
 func ensureServerRunning(cfg LaunchConfig) error { return runtimepkg.EnsureServerRunning(cfg.RawURL) }
 
 func handlePSCommand() {
-	cfg := resolveLaunchConfig()
+	cfg := resolveRuntimeConfig()
 	status, pid := runtimepkg.DaemonStatus(cfg.RawURL)
 	fmt.Print("launchdock ps\n\n")
 	fmt.Printf("status: %s\n", status)
@@ -30,7 +30,7 @@ func handleStopCommand() {
 }
 
 func handleRestartCommand() {
-	cfg := resolveLaunchConfig()
+	cfg := resolveRuntimeConfig()
 	_ = runtimepkg.StopServer()
 	if err := runtimepkg.EnsureServerRunning(cfg.RawURL); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
@@ -40,7 +40,7 @@ func handleRestartCommand() {
 }
 
 func handleStartCommand() {
-	cfg := resolveLaunchConfig()
+	cfg := resolveRuntimeConfig()
 	if err := runtimepkg.EnsureServerRunning(cfg.RawURL); err != nil {
 		fmt.Fprintf(os.Stderr, "✗ %v\n", err)
 		os.Exit(1)

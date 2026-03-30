@@ -30,7 +30,8 @@ type Credential struct {
 	Provider string // "anthropic" | "openai"
 	AuthType AuthType
 	Label    string
-	Source   string // "keychain:claude-code" | "file:~/.codex/auth.json" | "env:ANTHROPIC_API_KEY"
+	Source   string // "keychain:claude-code" | "file:~/.codex/auth.json" | "config:~/.config/launchdock/config.json"
+	Kind     string // e.g. "codex_chatgpt", "openai_oauth"
 	Managed  bool
 
 	// OAuth fields
@@ -228,6 +229,7 @@ func LoadFromFile(path string) ([]Credential, error) {
 		AuthType:     AuthOAuth,
 		Label:        "Codex OAuth (" + auth.AuthMode + ")",
 		Source:       "file:" + path,
+		Kind:         "codex_" + auth.AuthMode,
 		AccessToken:  auth.Tokens.AccessToken,
 		RefreshToken: auth.Tokens.RefreshToken,
 		AccountID:    auth.Tokens.AccountID,

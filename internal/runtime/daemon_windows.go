@@ -9,7 +9,7 @@ import (
 )
 
 func startBackgroundServer() error {
-	bin, err := os.Executable()
+	bin, err := resolveDaemonBinary()
 	if err != nil {
 		return err
 	}
@@ -20,7 +20,7 @@ func startBackgroundServer() error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, "serve")
 	cmd.Env = os.Environ()
 	cmd.Stdout = logf
 	cmd.Stderr = logf
@@ -33,4 +33,11 @@ func startBackgroundServer() error {
 		return err
 	}
 	return logf.Close()
+}
+
+func resolveDaemonBinary() (string, error) {
+	if path, err := exec.LookPath("launchdock"); err == nil {
+		return path, nil
+	}
+	return os.Executable()
 }

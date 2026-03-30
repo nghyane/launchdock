@@ -20,11 +20,12 @@ type ChatRequest struct {
 }
 
 type ChatMessage struct {
-	Role       string         `json:"role,omitempty"`
-	Content    any            `json:"content,omitempty"` // string or []ChatContentPart
-	Name       *string        `json:"name,omitempty"`
-	ToolCalls  []ChatToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string         `json:"tool_call_id,omitempty"`
+	Role             string         `json:"role,omitempty"`
+	Content          any            `json:"content,omitempty"` // string or []ChatContentPart
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
+	Name             *string        `json:"name,omitempty"`
+	ToolCalls        []ChatToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
 }
 
 type ChatContentPart struct {
@@ -50,7 +51,7 @@ type ChatFunction struct {
 }
 
 type ChatToolCall struct {
-	Index    int              `json:"index,omitempty"`
+	Index    int              `json:"index"`
 	ID       string           `json:"id,omitempty"`
 	Type     string           `json:"type,omitempty"`
 	Function ChatFunctionCall `json:"function"`

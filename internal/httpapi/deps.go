@@ -21,6 +21,7 @@ type AnthropicProvider = providerspkg.AnthropicProvider
 
 type ChatRequest = protocol.ChatRequest
 type ChatMessage = protocol.ChatMessage
+type ChatTool = protocol.ChatTool
 type ChatToolCall = protocol.ChatToolCall
 type ChatFunctionCall = protocol.ChatFunctionCall
 type ChatStreamChunk = protocol.ChatStreamChunk
@@ -33,6 +34,8 @@ type ClaudeResponse = protocol.ClaudeResponse
 type ClaudeMessageDelta = protocol.ClaudeMessageDelta
 type ClaudeContentBlockStart = protocol.ClaudeContentBlockStart
 type ClaudeContentBlockDelta = protocol.ClaudeContentBlockDelta
+type ClaudeMessageStart = protocol.ClaudeMessageStart
+type ClaudeChatAdapter = protocol.ClaudeChatAdapter
 
 var (
 	StreamClient = httpxpkg.StreamClient
@@ -62,4 +65,10 @@ func ResponsesNonStreamToChat(body []byte, model string) ([]byte, error) {
 func ClaudeStopToChat(reason *string) string { return protocol.ClaudeStopToChat(reason) }
 func ClaudeToChat(cr *ClaudeResponse, model string) *ChatResponse {
 	return protocol.ClaudeToChat(cr, model)
+}
+func ChatToClaudeRequest(chat *ChatRequest) (*protocol.ClaudeRequest, error) {
+	return protocol.ChatToClaudeRequest(chat)
+}
+func NewClaudeChatAdapter(model string, isOAuth bool) *protocol.ClaudeChatAdapter {
+	return protocol.NewClaudeChatAdapter(model, isOAuth)
 }

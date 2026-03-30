@@ -75,7 +75,6 @@ func execClaudeCode(cfg LaunchConfig, model string) ([]string, []string) {
 	return []string{"claude", "--model", model}, []string{
 		"ANTHROPIC_BASE_URL=" + cfg.RawURL,
 		"ANTHROPIC_AUTH_TOKEN=" + cfg.APIKey,
-		"ANTHROPIC_API_KEY=",
 	}
 }
 
@@ -133,17 +132,26 @@ func configOpenCode(cfg LaunchConfig, model string) {
 	for _, m := range cfg.Models {
 		models[m.ID] = map[string]any{"name": m.ID}
 	}
-	writeJSONConfig(path, dir, map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"provider": map[string]any{
-			"launchdock": map[string]any{
-				"npm":     "@ai-sdk/openai-compatible",
-				"name":    "launchdock",
-				"options": map[string]any{"baseURL": cfg.BaseURL},
-				"models":  models,
-			},
-		},
-	})
+	config := map[string]any{}
+	if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 {
+		if err := json.Unmarshal(existing, &config); err != nil {
+			fmt.Fprintf(os.Stderr, "  ✗ Read error: invalid JSON in %s: %v\n", path, err)
+			return
+		}
+	}
+	config["$schema"] = "https://opencode.ai/config.json"
+	providers, _ := config["provider"].(map[string]any)
+	if providers == nil {
+		providers = map[string]any{}
+	}
+	providers["launchdock"] = map[string]any{
+		"npm":     "@ai-sdk/openai-compatible",
+		"name":    "launchdock",
+		"options": map[string]any{"baseURL": cfg.BaseURL},
+		"models":  models,
+	}
+	config["provider"] = providers
+	writeJSONConfig(path, dir, config)
 }
 
 func execOpenCode(cfg LaunchConfig, model string) ([]string, []string) {

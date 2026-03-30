@@ -82,7 +82,6 @@ func validateLaunchReadiness(cfg LaunchConfig, t *Tool) {
 	if !cfg.HasCreds {
 		fmt.Fprintf(os.Stderr, "✗ No credentials found\n")
 		fmt.Fprintf(os.Stderr, "  Run: launchdock auth login claude\n")
-		fmt.Fprintf(os.Stderr, "  Or set: ANTHROPIC_API_KEY / OPENAI_API_KEY\n")
 		os.Exit(1)
 	}
 	if t.Provider == "" || cfg.HasProvider(t.Provider) {

@@ -43,6 +43,13 @@ func HandleModels(pool *Pool, anthropic *AnthropicProvider) http.HandlerFunc {
 	}
 }
 
+func ResetModelCache() {
+	modelCacheMu.Lock()
+	defer modelCacheMu.Unlock()
+	modelCache = nil
+	modelCacheTime = time.Time{}
+}
+
 func getCachedModels(pool *Pool, anthropic *AnthropicProvider) []map[string]any {
 	modelCacheMu.RLock()
 	if modelCache != nil && time.Since(modelCacheTime) < modelCacheTTL {
@@ -69,9 +76,12 @@ func fetchAllModels(pool *Pool, anthropic *AnthropicProvider) []map[string]any {
 		apiModels := fetchAnthropicModels(pool, anthropic)
 		if len(apiModels) > 0 {
 			models = append(models, apiModels...)
+			models = append(models, anthropicThinkingAliasModels(apiModels)...)
 		} else {
 			// Fallback to hardcoded if API fails
-			models = append(models, anthropicFallbackModels()...)
+			fallback := anthropicFallbackModels()
+			models = append(models, fallback...)
+			models = append(models, anthropicThinkingAliasModels(fallback)...)
 		}
 	}
 
@@ -155,6 +165,23 @@ func anthropicFallbackModels() []map[string]any {
 		})
 	}
 	return models
+}
+
+func anthropicThinkingAliasModels(base []map[string]any) []map[string]any {
+	var aliases []map[string]any
+	for _, m := range base {
+		id, _ := m["id"].(string)
+		switch id {
+		case "claude-opus-4-6", "claude-sonnet-4-6":
+			aliases = append(aliases, map[string]any{
+				"id":       id + "-thinking",
+				"object":   "model",
+				"created":  m["created"],
+				"owned_by": "anthropic",
+			})
+		}
+	}
+	return aliases
 }
 
 const codexModelsURL = "https://raw.githubusercontent.com/openai/codex/main/codex-rs/core/models.json"

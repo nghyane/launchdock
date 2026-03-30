@@ -71,6 +71,10 @@ func HandleMessages(pool *Pool, anthropic *AnthropicProvider) http.HandlerFunc {
 		}
 		defer upResp.Body.Close()
 
+		if upResp.StatusCode != http.StatusOK {
+			logAnthropicRequestSummary("messages", body)
+		}
+
 		if peek.Stream {
 			relayClaudeMessagesStream(w, upResp, cred)
 		} else {

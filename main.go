@@ -19,6 +19,12 @@ import (
 var version = "dev"
 
 func Run() {
+	// macOS Security.framework verification can fail in sandboxed/local setups;
+	// force pure-Go x509 verification unless the user explicitly overrides it.
+	if os.Getenv("GODEBUG") == "" {
+		_ = os.Setenv("GODEBUG", "x509usecgo=0")
+	}
+
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	if len(os.Args) >= 2 {
@@ -32,6 +38,8 @@ func Run() {
 		case "start":
 			handleStartCommand()
 			return
+		case "serve":
+			break
 		case "ps":
 			handlePSCommand()
 			return
@@ -55,7 +63,7 @@ func Run() {
 
 	creds := authpkg.LoadAllCredentials()
 	if len(creds) == 0 {
-		slog.Error("no credentials found", "hint", "set ANTHROPIC_API_KEY, OPENAI_API_KEY, or run `launchdock auth login claude`")
+		slog.Error("no credentials found", "hint", "run `launchdock auth login claude` or `launchdock auth login openai`")
 		os.Exit(1)
 	}
 	for _, c := range creds {
@@ -66,11 +74,12 @@ func Run() {
 	anthropicProvider := &providerspkg.AnthropicProvider{}
 	openaiProvider := &providerspkg.OpenAIProvider{}
 	providers := []providerspkg.Provider{anthropicProvider, openaiProvider}
+	httpapipkg.ResetModelCache()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/chat/completions", httpapipkg.HandleChatCompletions(pool, providers))
 	mux.HandleFunc("/v1/messages", httpapipkg.HandleMessages(pool, anthropicProvider))
-	mux.HandleFunc("/v1/responses", httpapipkg.HandleResponses(pool, openaiProvider))
+	mux.HandleFunc("/v1/responses", httpapipkg.HandleResponses(pool, openaiProvider, anthropicProvider))
 	mux.HandleFunc("/v1/models", httpapipkg.HandleModels(pool, anthropicProvider))
 	mux.HandleFunc("/health", httpapipkg.HandleHealth(pool))
 	mux.HandleFunc("/", httpapipkg.HandleHealth(pool))

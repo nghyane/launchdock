@@ -73,6 +73,10 @@ func authFailureMessage(provider string, body []byte) string {
 }
 
 func doWithCredentialRetry(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, attempt func(*authpkg.Credential) (*http.Response, error)) (*http.Response, *authpkg.Credential, error) {
+	return doWithCredentialRetryMatching(pool, providerName, cred, func(*authpkg.Credential) bool { return true }, attempt)
+}
+
+func doWithCredentialRetryMatching(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, match func(*authpkg.Credential) bool, attempt func(*authpkg.Credential) (*http.Response, error)) (*http.Response, *authpkg.Credential, error) {
 	refreshedSame := false
 	fallbackTried := false
 
@@ -99,7 +103,7 @@ func doWithCredentialRetry(pool *providerspkg.Pool, providerName string, cred *a
 			if !fallbackTried {
 				fallbackTried = true
 				pool.Cooldown(cred, 45*time.Second)
-				nextCred, err := pool.PickNext(providerName, cred)
+				nextCred, err := pool.PickNextMatching(providerName, cred, match)
 				if err == nil {
 					slog.Warn("retrying with fallback credential after auth failure", "provider", providerName, "credential", cred.Label, "fallback", nextCred.Label)
 					cred = nextCred
@@ -117,7 +121,7 @@ func doWithCredentialRetry(pool *providerspkg.Pool, providerName string, cred *a
 			case 529, 503:
 				pool.Cooldown(cred, 30*time.Second)
 			}
-			nextCred, err := pool.PickNext(providerName, cred)
+			nextCred, err := pool.PickNextMatching(providerName, cred, match)
 			if err == nil {
 				fallbackTried = true
 				cred = nextCred
@@ -127,6 +131,19 @@ func doWithCredentialRetry(pool *providerspkg.Pool, providerName string, cred *a
 
 		return rebuildErrorResponse(resp, errBody), cred, nil
 	}
+}
+
+func ensureOKOrRetryMatching(pool *providerspkg.Pool, providerName string, cred *authpkg.Credential, match func(*authpkg.Credential) bool, attempt func(*authpkg.Credential) (*http.Response, error)) (*http.Response, *authpkg.Credential, error) {
+	resp, nextCred, err := doWithCredentialRetryMatching(pool, providerName, cred, match, attempt)
+	if err != nil {
+		return nil, nextCred, err
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp, nextCred, nil
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return nil, nextCred, fmt.Errorf("upstream status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 }
 
 func rebuildErrorResponse(resp *http.Response, body []byte) *http.Response {

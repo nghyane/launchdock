@@ -36,10 +36,21 @@ func HandleChatCompletions(pool *providerspkg.Pool, providers []providerspkg.Pro
 			return
 		}
 
+		if strings.HasPrefix(strings.ToLower(chatReq.Model), "claude") {
+			thinking, _ := json.Marshal(chatReq.Thinking)
+			slog.Info("claude chat request",
+				"model", chatReq.Model,
+				"has_thinking", chatReq.Thinking != nil,
+				"thinking", trimForLog(string(thinking), 400),
+			)
+		}
+
 		if chatReq.Model == "" {
 			httpError(w, http.StatusBadRequest, "model is required")
 			return
 		}
+
+		applyClaudeThinkingAlias(&chatReq)
 
 		// Route to provider
 		provider := providerspkg.RouteProvider(providers, chatReq.Model)
@@ -91,6 +102,9 @@ func HandleChatCompletions(pool *providerspkg.Pool, providers []providerspkg.Pro
 
 		// Handle errors (non-retryable at this point)
 		if upResp.StatusCode != http.StatusOK {
+			if provider.ProviderName() == "anthropic" {
+				logAnthropicRequestSummary("chat.completions", upstreamBody)
+			}
 			handleUpstreamError(w, upResp, pool, cred)
 			return
 		}
@@ -100,6 +114,21 @@ func HandleChatCompletions(pool *providerspkg.Pool, providers []providerspkg.Pro
 			handleStreamResponse(w, upResp, provider, cred, chatReq.Model)
 		} else {
 			handleNonStreamResponse(w, upResp, provider, cred, chatReq.Model)
+		}
+	}
+}
+
+func applyClaudeThinkingAlias(chatReq *protocol.ChatRequest) {
+	switch chatReq.Model {
+	case "claude-opus-4-6-thinking":
+		chatReq.Model = "claude-opus-4-6"
+		if chatReq.Thinking == nil {
+			chatReq.Thinking = map[string]any{"type": "enabled", "budget_tokens": 16000}
+		}
+	case "claude-sonnet-4-6-thinking":
+		chatReq.Model = "claude-sonnet-4-6"
+		if chatReq.Thinking == nil {
+			chatReq.Thinking = map[string]any{"type": "enabled", "budget_tokens": 16000}
 		}
 	}
 }
@@ -152,6 +181,21 @@ func handleStreamResponse(w http.ResponseWriter, upResp *http.Response, provider
 }
 
 func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Credential) {
+	adapter := NewClaudeChatAdapter(model, cred.AuthType == AuthOAuth)
+	ReadSSE(body, func(ev SSEEvent) error {
+		for _, chunk := range adapter.Consume(ev.Event, ev.Data) {
+			sse.WriteJSON(chunk)
+		}
+		var event struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal([]byte(ev.Data), &event) == nil && event.Type == "message_stop" {
+			sse.WriteDone()
+		}
+		return nil
+	})
+	return
+
 	chatID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	isOAuth := cred.AuthType == AuthOAuth
 
@@ -197,7 +241,7 @@ func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Cr
 					name  string
 					args  string
 				}{
-					index: cbs.Index,
+					index: 0,
 					id:    cbs.ContentBlock.ID,
 					name:  name,
 				}
@@ -208,8 +252,9 @@ func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Cr
 						Index: 0,
 						Delta: &ChatMessage{
 							ToolCalls: []ChatToolCall{{
-								ID:   cbs.ContentBlock.ID,
-								Type: "function",
+								Index: 0,
+								ID:    cbs.ContentBlock.ID,
+								Type:  "function",
 								Function: ChatFunctionCall{
 									Name:      name,
 									Arguments: "",
@@ -239,13 +284,13 @@ func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Cr
 				sse.WriteJSON(chunk)
 
 			case "thinking_delta":
-				// Emit thinking as a special chunk — some clients understand this
+				// Emit thinking in reasoning_content for OpenAI-compatible chat clients.
 				if cbd.Delta.Thinking != "" {
 					chunk := ChatStreamChunk{
 						ID: chatID, Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: model,
 						Choices: []ChatChoice{{
 							Index:        0,
-							Delta:        &ChatMessage{Content: cbd.Delta.Thinking, Role: "thinking"},
+							Delta:        &ChatMessage{ReasoningContent: cbd.Delta.Thinking},
 							FinishReason: nil,
 						}},
 					}
@@ -254,27 +299,32 @@ func relayClaudeSSEAsChat(sse *SSEWriter, body io.Reader, model string, cred *Cr
 
 			case "input_json_delta":
 				if currentToolCall != nil && cbd.Delta.PartialJSON != "" {
-					// Only send arguments delta — no empty id/type/name fields
-					chunk := ChatStreamChunk{
-						ID: chatID, Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: model,
-						Choices: []ChatChoice{{
-							Index: 0,
-							Delta: &ChatMessage{
-								ToolCalls: []ChatToolCall{{
-									Index: currentToolCall.index,
-									Function: ChatFunctionCall{
-										Arguments: cbd.Delta.PartialJSON,
-									},
-								}},
-							},
-							FinishReason: nil,
-						}},
-					}
-					sse.WriteJSON(chunk)
+					currentToolCall.args += cbd.Delta.PartialJSON
 				}
 			}
 
 		case "content_block_stop":
+			if currentToolCall != nil && currentToolCall.args != "" {
+				chunk := ChatStreamChunk{
+					ID: chatID, Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: model,
+					Choices: []ChatChoice{{
+						Index: 0,
+						Delta: &ChatMessage{
+							ToolCalls: []ChatToolCall{{
+								Index: 0,
+								ID:    currentToolCall.id,
+								Type:  "function",
+								Function: ChatFunctionCall{
+									Name:      currentToolCall.name,
+									Arguments: currentToolCall.args,
+								},
+							}},
+						},
+						FinishReason: nil,
+					}},
+				}
+				sse.WriteJSON(chunk)
+			}
 			currentToolCall = nil
 
 		case "message_delta":
@@ -349,7 +399,7 @@ func handleUpstreamError(w http.ResponseWriter, resp *http.Response, pool *Pool,
 	slog.Warn("upstream error",
 		"status", resp.StatusCode,
 		"credential", cred.Label,
-		"body", string(body),
+		"body", trimForLog(string(body), 1200),
 	)
 
 	// Cooldown on rate limit or overload
@@ -363,6 +413,85 @@ func handleUpstreamError(w http.ResponseWriter, resp *http.Response, pool *Pool,
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(body)
+}
+
+func logAnthropicRequestSummary(endpoint string, body []byte) {
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		slog.Warn("anthropic request summary unavailable", "endpoint", endpoint, "error", err)
+		return
+	}
+
+	toolNames := []string{}
+	if tools, ok := req["tools"].([]any); ok {
+		for _, t := range tools {
+			if tm, ok := t.(map[string]any); ok {
+				if name, _ := tm["name"].(string); name != "" {
+					toolNames = append(toolNames, name)
+				}
+			}
+		}
+	}
+
+	lastRole := ""
+	lastTypes := []string{}
+	assistantToolCalls := []string{}
+	if msgs, ok := req["messages"].([]any); ok && len(msgs) > 0 {
+		if last, ok := msgs[len(msgs)-1].(map[string]any); ok {
+			lastRole, _ = last["role"].(string)
+			switch content := last["content"].(type) {
+			case string:
+				lastTypes = append(lastTypes, "text")
+			case []any:
+				for _, item := range content {
+					if cm, ok := item.(map[string]any); ok {
+						if typ, _ := cm["type"].(string); typ != "" {
+							lastTypes = append(lastTypes, typ)
+						}
+					}
+				}
+			}
+			if toolCalls, ok := last["tool_calls"].([]any); ok {
+				for _, tc := range toolCalls {
+					if tcm, ok := tc.(map[string]any); ok {
+						if fn, ok := tcm["function"].(map[string]any); ok {
+							if name, _ := fn["name"].(string); name != "" {
+								assistantToolCalls = append(assistantToolCalls, name)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	toolChoice, _ := json.Marshal(req["tool_choice"])
+	thinking, _ := json.Marshal(req["thinking"])
+	system, _ := json.Marshal(req["system"])
+
+	slog.Warn("anthropic request summary",
+		"endpoint", endpoint,
+		"model", req["model"],
+		"stream", req["stream"],
+		"max_tokens", req["max_tokens"],
+		"tool_names", toolNames,
+		"tool_choice", string(toolChoice),
+		"thinking", trimForLog(string(thinking), 400),
+		"last_role", lastRole,
+		"last_content_types", lastTypes,
+		"last_tool_calls", assistantToolCalls,
+		"system", trimForLog(string(system), 400),
+	)
+}
+
+func trimForLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
 }
 
 func httpError(w http.ResponseWriter, code int, msg string) {

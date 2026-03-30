@@ -25,12 +25,19 @@ func NewPool(creds []authpkg.Credential) *Pool {
 // Pick selects the next available credential for the given provider.
 // Skips credentials that are cooled down or expired (and can't refresh).
 func (p *Pool) Pick(provider string) (*authpkg.Credential, error) {
+	return p.PickMatching(provider, nil, func(*authpkg.Credential) bool { return true })
+}
+
+func (p *Pool) PickMatching(provider string, exclude *authpkg.Credential, match func(*authpkg.Credential) bool) (*authpkg.Credential, error) {
 	n := len(p.creds)
 	if n == 0 {
 		return nil, fmt.Errorf("no credentials available")
 	}
-	for _, idx := range p.pickCandidateIndices(provider, nil) {
+	for _, idx := range p.pickCandidateIndices(provider, exclude) {
 		c := &p.creds[idx]
+		if match != nil && !match(c) {
+			continue
+		}
 		if p.needsRefresh(c) {
 			if err := p.refresh(c); err != nil {
 				slog.Warn("credential refresh failed", "label", c.Label, "error", err)
@@ -47,8 +54,15 @@ func (p *Pool) Pick(provider string) (*authpkg.Credential, error) {
 
 // PickNext selects the next credential after a failed attempt (for retry).
 func (p *Pool) PickNext(provider string, exclude *authpkg.Credential) (*authpkg.Credential, error) {
+	return p.PickNextMatching(provider, exclude, func(*authpkg.Credential) bool { return true })
+}
+
+func (p *Pool) PickNextMatching(provider string, exclude *authpkg.Credential, match func(*authpkg.Credential) bool) (*authpkg.Credential, error) {
 	for _, idx := range p.pickCandidateIndices(provider, exclude) {
 		c := &p.creds[idx]
+		if match != nil && !match(c) {
+			continue
+		}
 		if p.needsRefresh(c) {
 			if err := p.refresh(c); err != nil {
 				slog.Warn("fallback credential refresh failed", "label", c.Label, "error", err)
@@ -65,6 +79,10 @@ func (p *Pool) PickNext(provider string, exclude *authpkg.Credential) (*authpkg.
 
 // Cooldown marks a credential as temporarily unavailable.
 func (p *Pool) Cooldown(c *authpkg.Credential, d time.Duration) {
+	if !p.hasAlternativeCredential(c.Provider, c) {
+		slog.Info("skipping credential cooldown; no alternative available", "label", c.Label, "provider", c.Provider)
+		return
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	c.CooldownUntil = time.Now().Add(d)
@@ -131,6 +149,18 @@ func (p *Pool) needsRefresh(c *authpkg.Credential) bool {
 	return time.Until(c.ExpiresAt) <= 5*time.Minute
 }
 
+func (p *Pool) hasAlternativeCredential(provider string, current *authpkg.Credential) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for i := range p.creds {
+		c := &p.creds[i]
+		if c.Provider == provider && c != current {
+			return true
+		}
+	}
+	return false
+}
+
 func (p *Pool) lockForCredential(c *authpkg.Credential) *sync.Mutex {
 	key := c.Provider + ":" + c.Source + ":" + c.Label
 	if c.ID != "" {
@@ -174,6 +204,13 @@ func (p *Pool) refresh(c *authpkg.Credential) error {
 	case provider == "openai" && authType == authpkg.AuthOAuth && refreshToken != "":
 		at, rt, exp, err := authpkg.RefreshOpenAIOAuth(refreshToken)
 		if err != nil {
+			if managed && managedID != "" && authpkg.IsTerminalOpenAIRefreshError(err) {
+				if derr := authpkg.SetConfigCredentialDisabled(managedID, true); derr != nil {
+					slog.Warn("disable stale OpenAI credential failed", "label", label, "id", managedID, "error", derr)
+				} else {
+					slog.Warn("disabled stale OpenAI credential", "label", label, "id", managedID)
+				}
+			}
 			p.Cooldown(c, 45*time.Second)
 			return err
 		}

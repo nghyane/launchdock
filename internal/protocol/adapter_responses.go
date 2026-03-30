@@ -120,10 +120,21 @@ func ChatToResponsesRequest(body []byte) ([]byte, error) {
 
 	// Reasoning — passthrough if present, or set defaults for capable models
 	if reasoning, ok := chat["reasoning"]; ok {
-		resp["reasoning"] = reasoning
+		if rm, ok := reasoning.(map[string]any); ok {
+			clone := map[string]any{}
+			for k, v := range rm {
+				clone[k] = v
+			}
+			if _, ok := clone["summary"]; !ok {
+				clone["summary"] = "detailed"
+			}
+			resp["reasoning"] = clone
+		} else {
+			resp["reasoning"] = reasoning
+		}
 	} else if reasoning, ok := chat["reasoning_effort"]; ok {
 		// OpenAI SDK sends reasoning_effort as string
-		resp["reasoning"] = map[string]any{"effort": reasoning}
+		resp["reasoning"] = map[string]any{"effort": reasoning, "summary": "detailed"}
 	}
 
 	// Text verbosity — low for concise responses by default
@@ -244,12 +255,22 @@ func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, 
 	}
 
 	switch {
+	case typ == "response.reasoning_summary_text.delta":
+		delta, _ := obj["delta"].(string)
+		if delta == "" {
+			return ""
+		}
+		chunk := buildChatChunk(chatID, model, created, *isFirst, "", delta, nil, nil)
+		*isFirst = false
+		b, _ := json.Marshal(chunk)
+		return string(b)
+
 	case typ == "response.output_text.delta":
 		delta, _ := obj["delta"].(string)
 		if delta == "" {
 			return ""
 		}
-		chunk := buildChatChunk(chatID, model, created, *isFirst, delta, nil, nil)
+		chunk := buildChatChunk(chatID, model, created, *isFirst, delta, "", nil, nil)
 		*isFirst = false
 		b, _ := json.Marshal(chunk)
 		return string(b)
@@ -277,7 +298,7 @@ func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, 
 			}
 		}
 		if tc != nil {
-			chunk := buildChatChunk(chatID, model, created, *isFirst, "", []ChatToolCall{*tc}, nil)
+			chunk := buildChatChunk(chatID, model, created, *isFirst, "", "", []ChatToolCall{*tc}, nil)
 			*isFirst = false
 			b, _ := json.Marshal(chunk)
 			return string(b)
@@ -298,7 +319,7 @@ func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, 
 				}
 			}
 		}
-		chunk := buildChatChunk(chatID, model, created, false, "", nil, &finish)
+		chunk := buildChatChunk(chatID, model, created, false, "", "", nil, &finish)
 		// Add usage if available
 		if resp, ok := obj["response"].(map[string]any); ok {
 			if usage, ok := resp["usage"].(map[string]any); ok {
@@ -317,7 +338,7 @@ func ResponsesSSEToChatSSE(eventType, data string, model string, chatID string, 
 	case typ == "response.output_item.added":
 		// Emit role chunk for first message item
 		if *isFirst {
-			chunk := buildChatChunk(chatID, model, created, true, "", nil, nil)
+			chunk := buildChatChunk(chatID, model, created, true, "", "", nil, nil)
 			*isFirst = false
 			b, _ := json.Marshal(chunk)
 			return string(b)
@@ -335,6 +356,7 @@ func ResponsesNonStreamToChat(body []byte, model string) ([]byte, error) {
 	}
 
 	var text string
+	var reasoning string
 	var toolCalls []ChatToolCall
 	finishReason := "stop"
 
@@ -346,6 +368,17 @@ func ResponsesNonStreamToChat(body []byte, model string) ([]byte, error) {
 		}
 
 		switch block["type"] {
+		case "reasoning":
+			summary, _ := block["summary"].([]any)
+			for _, part := range summary {
+				p, _ := part.(map[string]any)
+				if p == nil {
+					continue
+				}
+				if s, _ := p["text"].(string); s != "" {
+					reasoning += s
+				}
+			}
 		case "message":
 			content, _ := block["content"].([]any)
 			for _, part := range content {
@@ -376,6 +409,9 @@ func ResponsesNonStreamToChat(body []byte, model string) ([]byte, error) {
 	}
 
 	msg := ChatMessage{Role: "assistant"}
+	if reasoning != "" {
+		msg.ReasoningContent = reasoning
+	}
 	if text != "" {
 		msg.Content = text
 	}
@@ -411,13 +447,16 @@ func ResponsesNonStreamToChat(body []byte, model string) ([]byte, error) {
 	return json.Marshal(chatResp)
 }
 
-func buildChatChunk(id, model string, created int64, withRole bool, content string, toolCalls []ChatToolCall, finishReason *string) map[string]any {
+func buildChatChunk(id, model string, created int64, withRole bool, content string, reasoningContent string, toolCalls []ChatToolCall, finishReason *string) map[string]any {
 	delta := map[string]any{}
 	if withRole {
 		delta["role"] = "assistant"
 	}
 	if content != "" {
 		delta["content"] = content
+	}
+	if reasoningContent != "" {
+		delta["reasoning_content"] = reasoningContent
 	}
 	if len(toolCalls) > 0 {
 		delta["tool_calls"] = toolCalls
