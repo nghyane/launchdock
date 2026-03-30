@@ -16,7 +16,9 @@ type ChatRequest struct {
 	Stop        any           `json:"stop,omitempty"`
 
 	// Extended thinking (non-standard, passed through to Claude)
-	Thinking any `json:"thinking,omitempty"`
+	Thinking        any    `json:"thinking,omitempty"`
+	Reasoning       any    `json:"reasoning,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 type ChatMessage struct {

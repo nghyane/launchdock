@@ -38,10 +38,13 @@ func HandleChatCompletions(pool *providerspkg.Pool, providers []providerspkg.Pro
 
 		if strings.HasPrefix(strings.ToLower(chatReq.Model), "claude") {
 			thinking, _ := json.Marshal(chatReq.Thinking)
+			reasoning, _ := json.Marshal(chatReq.Reasoning)
 			slog.Info("claude chat request",
 				"model", chatReq.Model,
 				"has_thinking", chatReq.Thinking != nil,
 				"thinking", trimForLog(string(thinking), 400),
+				"reasoning", trimForLog(string(reasoning), 400),
+				"reasoning_effort", chatReq.ReasoningEffort,
 			)
 		}
 

@@ -130,7 +130,21 @@ func configOpenCode(cfg LaunchConfig, model string) {
 	path := filepath.Join(dir, "opencode.json")
 	models := map[string]any{}
 	for _, m := range cfg.Models {
-		models[m.ID] = map[string]any{"name": m.ID}
+		entry := map[string]any{"name": m.ID}
+		baseID := strings.TrimSuffix(m.ID, "-thinking")
+		if md, ok := lookupLaunchModelMetadata(baseID); ok {
+			entry["id"] = m.ID
+			entry["name"] = md.Name
+			if strings.HasSuffix(m.ID, "-thinking") {
+				entry["name"] = md.Name + " Thinking"
+			}
+			entry["tool_call"] = md.ToolCall
+			entry["temperature"] = md.Temperature
+			entry["reasoning"] = md.Reasoning
+			entry["attachment"] = md.Attachment
+			entry["limit"] = md.Limit
+		}
+		models[m.ID] = entry
 	}
 	config := map[string]any{}
 	if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 {

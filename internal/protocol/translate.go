@@ -25,7 +25,8 @@ func ChatToClaudeRequest(chat *ChatRequest) (*ClaudeRequest, error) {
 	}
 	cr.Temperature = chat.Temperature
 	cr.TopP = chat.TopP
-	cr.Thinking = chat.Thinking
+	cr.Thinking = normalizeClaudeThinking(chat.Thinking, chat.ReasoningEffort)
+	adjustClaudeMaxTokens(cr, chat.Thinking, chat.ReasoningEffort)
 
 	// Extract system messages
 	var systemParts []string
@@ -81,6 +82,117 @@ func ChatToClaudeRequest(chat *ChatRequest) (*ClaudeRequest, error) {
 	}
 
 	return cr, nil
+}
+
+func adjustClaudeMaxTokens(cr *ClaudeRequest, rawThinking any, reasoningEffort string) {
+	budget := extractClaudeThinkingBudget(cr.Thinking)
+	if budget <= 0 {
+		budget = extractClaudeThinkingBudget(rawThinking)
+	}
+	if budget <= 0 {
+		switch strings.ToLower(strings.TrimSpace(reasoningEffort)) {
+		case "low":
+			budget = 4096
+		case "medium":
+			budget = 16000
+		case "high":
+			budget = 32000
+		}
+	}
+	if budget <= 0 {
+		return
+	}
+	if cr.MaxTokens <= budget {
+		cr.MaxTokens = budget + 1024
+	}
+}
+
+func extractClaudeThinkingBudget(thinking any) int {
+	m, ok := thinking.(map[string]any)
+	if !ok {
+		return 0
+	}
+	if budget, ok := asInt(m["budget_tokens"]); ok && budget > 0 {
+		return budget
+	}
+	if budget, ok := asInt(m["budgetTokens"]); ok && budget > 0 {
+		return budget
+	}
+	if enabled, ok := m["enabled"].(map[string]any); ok {
+		if budget, ok := asInt(enabled["budget_tokens"]); ok && budget > 0 {
+			return budget
+		}
+		if budget, ok := asInt(enabled["budgetTokens"]); ok && budget > 0 {
+			return budget
+		}
+	}
+	return 0
+}
+
+func normalizeClaudeThinking(thinking any, reasoningEffort string) any {
+	if m, ok := thinking.(map[string]any); ok {
+		clone := map[string]any{}
+		for k, v := range m {
+			clone[k] = v
+		}
+		if enabled, ok := clone["enabled"].(map[string]any); ok {
+			if _, ok := clone["type"]; !ok {
+				clone["type"] = "enabled"
+			}
+			if _, ok := clone["budget_tokens"]; !ok {
+				if v, ok := enabled["budget_tokens"]; ok {
+					clone["budget_tokens"] = v
+				} else if v, ok := enabled["budgetTokens"]; ok {
+					clone["budget_tokens"] = v
+				}
+			}
+			delete(clone, "enabled")
+		}
+		if _, ok := clone["budget_tokens"]; !ok {
+			if v, ok := clone["budgetTokens"]; ok {
+				clone["budget_tokens"] = v
+				delete(clone, "budgetTokens")
+			}
+		}
+		if _, ok := clone["type"]; !ok && clone["budget_tokens"] != nil {
+			clone["type"] = "enabled"
+		}
+		if clone["budget_tokens"] != nil || clone["type"] != nil {
+			return clone
+		}
+	}
+
+	switch strings.ToLower(strings.TrimSpace(reasoningEffort)) {
+	case "low":
+		return map[string]any{"type": "enabled", "budget_tokens": 4096}
+	case "medium":
+		return map[string]any{"type": "enabled", "budget_tokens": 16000}
+	case "high":
+		return map[string]any{"type": "enabled", "budget_tokens": 32000}
+	default:
+		return thinking
+	}
+}
+
+func asInt(v any) (int, bool) {
+	switch x := v.(type) {
+	case int:
+		return x, true
+	case int64:
+		return int(x), true
+	case float64:
+		return int(x), true
+	case json.Number:
+		i, err := x.Int64()
+		if err == nil {
+			return int(i), true
+		}
+	case string:
+		if i, err := json.Number(x).Int64(); err == nil {
+			return int(i), true
+		}
+	}
+	return 0, false
 }
 
 func chatMsgToClaudeMsg(msg ChatMessage) (ClaudeMessage, error) {
