@@ -155,24 +155,45 @@ func importManagedCredentials(r io.Reader) (int, error) {
 
 func mergeImportedCredentials(imported []authpkg.ConfigCredential) (int, error) {
 	cfg := authpkg.LoadConfig()
-	index := map[string]int{}
-	for i, cc := range cfg.Credentials {
-		index[cc.ID] = i
-	}
 	count := 0
 	for _, cc := range imported {
 		if cc.ID == "" {
 			cc.ID = authpkg.GenerateCredentialID()
 		}
-		if i, ok := index[cc.ID]; ok {
-			cfg.Credentials[i] = cc
+		match := -1
+		for i, existing := range cfg.Credentials {
+			if strings.EqualFold(existing.Provider, cc.Provider) {
+				if cc.AccountID != "" && existing.AccountID != "" && cc.AccountID == existing.AccountID {
+					match = i
+					break
+				}
+				if match == -1 && cc.Email != "" && existing.Email != "" && strings.EqualFold(cc.Email, existing.Email) {
+					match = i
+				}
+			}
+		}
+		if match >= 0 {
+			cc.ID = cfg.Credentials[match].ID
+			cfg.Credentials[match] = cc
 		} else {
-			cfg.Credentials = append(cfg.Credentials, cc)
-			index[cc.ID] = len(cfg.Credentials) - 1
+			if i := findByID(cfg.Credentials, cc.ID); i >= 0 {
+				cfg.Credentials[i] = cc
+			} else {
+				cfg.Credentials = append(cfg.Credentials, cc)
+			}
 		}
 		count++
 	}
 	return count, authpkg.SaveConfig(cfg)
+}
+
+func findByID(creds []authpkg.ConfigCredential, id string) int {
+	for i, cc := range creds {
+		if cc.ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func handleAuthExport() {
@@ -229,6 +250,10 @@ func handleAuthPush() {
 }
 
 func ensureRemoteLaunchdock(target string) error {
+	if err := installCurrentBinary(target); err == nil {
+		return nil
+	}
+
 	version := currentVersion()
 	if version == "" || version == "dev" {
 		version = latestReleaseVersion()
@@ -240,6 +265,24 @@ func ensureRemoteLaunchdock(target string) error {
 		return nil
 	}
 	return installRemoteLaunchdock(target, version)
+}
+
+func installCurrentBinary(target string) error {
+	bin, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	tmp := "/tmp/launchdock-upload"
+	copy := exec.Command("scp", bin, target+":"+tmp)
+	copy.Stdout = os.Stdout
+	copy.Stderr = os.Stderr
+	if err := copy.Run(); err != nil {
+		return err
+	}
+	install := exec.Command("ssh", target, "mkdir -p $HOME/.local/bin && install "+tmp+" $HOME/.local/bin/launchdock && $HOME/.local/bin/launchdock version >/dev/null")
+	install.Stdout = os.Stdout
+	install.Stderr = os.Stderr
+	return install.Run()
 }
 
 func installRemoteLaunchdock(target, version string) error {

@@ -528,8 +528,9 @@ func LoadFromConfig() []Credential {
 					creds = append(creds, cred)
 					continue
 				}
+				// Token is expired or near expiry; fall through to refresh path.
 			}
-			// Try refresh immediately to get access token
+			// Refresh only when needed.
 			var at, rt string
 			var exp time.Time
 			var err error
