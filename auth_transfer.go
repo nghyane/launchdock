@@ -268,10 +268,11 @@ func ensureRemoteLaunchdock(target string) error {
 }
 
 func installCurrentBinary(target string) error {
-	bin, err := os.Executable()
+	bin, cleanup, err := buildBinaryForRemote(target)
 	if err != nil {
 		return err
 	}
+	defer cleanup()
 	tmp := "/tmp/launchdock-upload"
 	copy := exec.Command("scp", bin, target+":"+tmp)
 	copy.Stdout = os.Stdout
@@ -283,6 +284,43 @@ func installCurrentBinary(target string) error {
 	install.Stdout = os.Stdout
 	install.Stderr = os.Stderr
 	return install.Run()
+}
+
+func buildBinaryForRemote(target string) (string, func(), error) {
+	out, err := exec.Command("ssh", target, "uname -s && uname -m").Output()
+	if err != nil {
+		return "", func() {}, err
+	}
+	parts := strings.Fields(string(out))
+	if len(parts) < 2 {
+		return "", func() {}, fmt.Errorf("could not detect remote platform")
+	}
+	osName := strings.ToLower(parts[0])
+	arch := strings.ToLower(parts[1])
+	switch arch {
+	case "x86_64", "amd64":
+		arch = "amd64"
+	case "aarch64", "arm64":
+		arch = "arm64"
+	}
+	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("launchdock-%s-%s", osName, arch))
+	cmd := exec.Command("go", "build", "-o", tmp, "./cmd/launchdock")
+	cmd.Env = append(os.Environ(), "GOOS="+osName, "GOARCH="+arch)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Dir = mustGetwd()
+	if err := cmd.Run(); err != nil {
+		return "", func() {}, err
+	}
+	return tmp, func() { _ = os.Remove(tmp) }, nil
+}
+
+func mustGetwd() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "."
+	}
+	return wd
 }
 
 func installRemoteLaunchdock(target, version string) error {
