@@ -141,6 +141,9 @@ func ChatToResponsesRequest(body []byte) ([]byte, error) {
 	if text, ok := chat["text"]; ok {
 		resp["text"] = text
 	}
+	if responseFormat, ok := chat["response_format"]; ok {
+		applyChatResponseFormat(resp, responseFormat)
+	}
 
 	// Prompt cache key — conversation-level stable ID
 	// Codex uses conversation_id (UUID per session) so server caches the full prefix
@@ -156,6 +159,43 @@ func ChatToResponsesRequest(body []byte) ([]byte, error) {
 	}
 
 	return json.Marshal(resp)
+}
+
+func applyChatResponseFormat(resp map[string]any, responseFormat any) {
+	rf, ok := responseFormat.(map[string]any)
+	if !ok || rf == nil {
+		return
+	}
+	rfType, _ := rf["type"].(string)
+	if rfType == "" || rfType == "text" {
+		return
+	}
+	text, _ := resp["text"].(map[string]any)
+	if text == nil {
+		text = map[string]any{}
+	}
+	switch rfType {
+	case "json_object":
+		text["format"] = map[string]any{"type": "json_object"}
+	case "json_schema":
+		js, _ := rf["json_schema"].(map[string]any)
+		if js == nil {
+			return
+		}
+		format := map[string]any{"type": "json_schema"}
+		for _, key := range []string{"name", "schema", "description", "strict"} {
+			if v, ok := js[key]; ok {
+				format[key] = v
+			}
+		}
+		if _, ok := format["schema"]; !ok {
+			return
+		}
+		text["format"] = format
+	default:
+		return
+	}
+	resp["text"] = text
 }
 
 func chatToolsToResponsesTools(tools []any) []map[string]any {

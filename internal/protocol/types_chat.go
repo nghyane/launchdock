@@ -5,15 +5,17 @@ import "encoding/json"
 // OpenAI Chat Completions wire types — client-facing lingua franca
 
 type ChatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	Stream      bool          `json:"stream,omitempty"`
-	MaxTokens   *int          `json:"max_tokens,omitempty"`
-	Temperature *float64      `json:"temperature,omitempty"`
-	TopP        *float64      `json:"top_p,omitempty"`
-	Tools       []ChatTool    `json:"tools,omitempty"`
-	ToolChoice  any           `json:"tool_choice,omitempty"`
-	Stop        any           `json:"stop,omitempty"`
+	Model          string        `json:"model"`
+	Messages       []ChatMessage `json:"messages"`
+	Stream         bool          `json:"stream,omitempty"`
+	MaxTokens      *int          `json:"max_tokens,omitempty"`
+	Temperature    *float64      `json:"temperature,omitempty"`
+	TopP           *float64      `json:"top_p,omitempty"`
+	Tools          []ChatTool    `json:"tools,omitempty"`
+	ToolChoice     any           `json:"tool_choice,omitempty"`
+	Stop           any           `json:"stop,omitempty"`
+	ResponseFormat any           `json:"response_format,omitempty"`
+	Text           any           `json:"text,omitempty"`
 
 	// Extended thinking (non-standard, passed through to Claude)
 	Thinking        any    `json:"thinking,omitempty"`
