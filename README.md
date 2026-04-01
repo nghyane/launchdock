@@ -4,15 +4,16 @@
 [![Release](https://img.shields.io/github/v/release/nghyane/launchdock)](https://github.com/nghyane/launchdock/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/nghyane/launchdock)](https://github.com/nghyane/launchdock/stargazers)
 
-Use Claude and ChatGPT/Codex across AI coding tools through one local OpenAI-compatible endpoint.
+Use Claude and GPT across AI coding tools through one local gateway, with both OpenAI-compatible and Claude-native API surfaces.
 
 `launchdock` gives you one local endpoint for tools like OpenCode, Codex, Claude Code, Droid, and Pi.
 
 Why people use it:
 
 - use OpenCode or Codex with the accounts you already have
-- avoid managing separate credentials everywhere
-- log in once and reuse that auth across multiple tools
+- use Claude through either OpenAI-compatible chat clients or the native Claude Messages API
+- avoid managing separate credentials and configs everywhere
+- log in once and reuse managed auth across multiple tools
 - push managed auth to a personal server when needed
 
 ## Install
@@ -55,11 +56,12 @@ Supported auth sources:
 - Claude: `launchdock auth login claude`
 - OpenAI/Codex: `launchdock auth login openai`
 
-Not supported:
+Why this auth model is useful:
 
-- API-key auth via environment variables
-
-Auth is intentionally handled through Claude/OpenAI login flows, not env keys.
+- sign in once through the native Claude/OpenAI login flow
+- reuse the same managed auth across local tools and personal servers
+- avoid copying API keys into multiple configs or shell environments
+- keep the workflow aligned with Claude Code and Codex account-based usage
 
 ## Personal server
 
@@ -109,10 +111,11 @@ Supported API surfaces:
 
 ### Support matrix
 
-| Endpoint | GPT | Claude | Reasoning / Thinking | Tools |
+| Endpoint | GPT | Claude | Semantics | Tools |
 |---|---|---|---|---|
-| `/v1/chat/completions` | ✅ | ✅ | OpenAI-compatible chat extension fields such as `reasoning_content` | ✅ |
-| `/v1/responses` | ✅ | ✅ | Native Responses reasoning events/items | ✅ |
+| `/v1/chat/completions` | ✅ | ✅ | OpenAI-compatible chat | ✅ |
+| `/v1/responses` | ✅ | ✅ | Native OpenAI Responses semantics | ✅ |
+| `/v1/messages` | — | ✅ | Native Claude Messages format | ✅ |
 
 ### Endpoint semantics
 
@@ -120,7 +123,7 @@ Supported API surfaces:
 
 - standard OpenAI-compatible chat chunks
 - reasoning/thinking is exposed through compatibility fields such as `choices[].delta.reasoning_content`
-- good default for broad client compatibility
+- best default for broad client compatibility across GPT and Claude
 
 #### `/v1/responses`
 
@@ -130,6 +133,12 @@ Supported API surfaces:
   - `reasoning` output items
   - `function_call` items/events
 - preferred endpoint for the richest reasoning lifecycle
+
+#### `/v1/messages`
+
+- native Claude Messages request/response format
+- useful for Claude-native clients or integrations that expect Anthropic-style payloads
+- uses the same managed Claude account auth as the OpenAI-compatible surfaces
 
 ### Tool naming
 
