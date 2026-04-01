@@ -1,9 +1,9 @@
 name: Release
 
 on:
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -52,12 +52,12 @@ jobs:
             ext=".exe"
           fi
           bin="launchdock${ext}"
-          version="${{ github.event.release.tag_name || github.ref_name }}"
+          version="${{ github.ref_name }}"
           go build -trimpath -ldflags="-s -w -X github.com/nghiahoang/launchdock.version=${version}" -o "dist/${bin}" ./cmd/launchdock
 
       - name: Package archive
         run: |
-          version="${{ github.event.release.tag_name || github.ref_name }}"
+          version="${{ github.ref_name }}"
           name="launchdock-${version}-${{ matrix.goos }}-${{ matrix.goarch }}"
           mkdir -p package
           cp README.md package/
@@ -73,16 +73,18 @@ jobs:
         run: sha256sum *.tar.gz *.zip 2>/dev/null > checksums-${{ matrix.goos }}-${{ matrix.goarch }}.txt || true
 
       - name: Upload release asset
-        if: github.event_name == 'release'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
           files: |
             *.tar.gz
             *.zip
             checksums-*.txt
 
       - name: Upload workflow artifact
-        if: github.event_name != 'release'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: launchdock-${{ matrix.goos }}-${{ matrix.goarch }}
