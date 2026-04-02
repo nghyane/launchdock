@@ -52,10 +52,10 @@ func RunOAuthFlow(label string) (*Credential, error) {
 		"%s?code=true&client_id=%s&response_type=code&redirect_uri=%s&scope=%s&code_challenge=%s&code_challenge_method=S256&state=%s",
 		claudeAuthorizeURL,
 		claudeClientID,
-		redirectURI,
-		scopes,
-		challenge,
-		state,
+		url.QueryEscape(redirectURI),
+		url.QueryEscape(scopes),
+		url.QueryEscape(challenge),
+		url.QueryEscape(state),
 	)
 
 	// Channel to receive the auth code
@@ -138,10 +138,10 @@ func RunOpenAIOAuthFlow(label string) (*Credential, error) {
 		"%s?response_type=code&client_id=%s&redirect_uri=%s&scope=%s&code_challenge=%s&code_challenge_method=S256&id_token_add_organizations=true&codex_cli_simplified_flow=true&state=%s",
 		openAIAuthorizeURL,
 		openAIClientID,
-		redirectURI,
-		"openid+profile+email+offline_access",
-		challenge,
-		state,
+		url.QueryEscape(redirectURI),
+		url.QueryEscape("openid profile email offline_access"),
+		url.QueryEscape(challenge),
+		url.QueryEscape(state),
 	)
 
 	codeCh := make(chan string, 1)
