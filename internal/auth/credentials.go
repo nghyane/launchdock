@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -250,23 +251,24 @@ const (
 	// Claude OAuth (from Claude Code binary)
 	claudeOAuthEndpoint = "https://platform.claude.com/v1/oauth/token"
 	claudeClientID      = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	claudeDefaultScopes = "user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
+	claudeDefaultScopes = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 )
 
 // RefreshClaudeOAuth refreshes a Claude OAuth token using the discovered endpoint.
-// Per RFC 6749, OAuth token endpoints expect form-encoded bodies.
 func RefreshClaudeOAuth(refreshToken string) (accessToken, newRefresh string, expiresAt time.Time, err error) {
-	form := url.Values{
-		"grant_type":    {"refresh_token"},
-		"refresh_token": {refreshToken},
-		"client_id":     {claudeClientID},
-		"scope":         {claudeDefaultScopes},
+	body := map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+		"client_id":     claudeClientID,
+		"scope":         claudeDefaultScopes,
 	}
-	req, err := http.NewRequest("POST", claudeOAuthEndpoint, strings.NewReader(form.Encode()))
+	bodyBytes, _ := json.Marshal(body)
+
+	req, err := http.NewRequest("POST", claudeOAuthEndpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("build refresh request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := APIClient.Do(req)
 	if err != nil {

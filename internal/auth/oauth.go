@@ -24,7 +24,7 @@ import (
 // for adding Claude accounts to launchdock.
 
 const (
-	claudeAuthorizeURL = "https://claude.ai/oauth/authorize"
+	claudeAuthorizeURL = "https://claude.com/cai/oauth/authorize"
 	openAIAuthorizeURL = "https://auth.openai.com/oauth/authorize"
 	openAIDefaultPort  = 1455
 )
@@ -38,7 +38,7 @@ func RunOAuthFlow(label string) (*Credential, error) {
 	state := generateState()
 
 	// Start local callback server
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return nil, fmt.Errorf("start callback server: %w", err)
 	}
@@ -47,16 +47,21 @@ func RunOAuthFlow(label string) (*Credential, error) {
 	redirectURI := fmt.Sprintf("http://localhost:%d/callback", port)
 	scopes := claudeDefaultScopes
 
-	// Build authorize URL
-	authorizeURL := fmt.Sprintf(
-		"%s?code=true&client_id=%s&response_type=code&redirect_uri=%s&scope=%s&code_challenge=%s&code_challenge_method=S256&state=%s",
-		claudeAuthorizeURL,
-		claudeClientID,
-		url.QueryEscape(redirectURI),
-		url.QueryEscape(scopes),
-		url.QueryEscape(challenge),
-		url.QueryEscape(state),
-	)
+	authURL, err := url.Parse(claudeAuthorizeURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse authorize url: %w", err)
+	}
+	params := authURL.Query()
+	params.Set("code", "true")
+	params.Set("client_id", claudeClientID)
+	params.Set("response_type", "code")
+	params.Set("redirect_uri", redirectURI)
+	params.Set("scope", scopes)
+	params.Set("code_challenge", challenge)
+	params.Set("code_challenge_method", "S256")
+	params.Set("state", state)
+	authURL.RawQuery = params.Encode()
+	authorizeURL := authURL.String()
 
 	// Channel to receive the auth code
 	codeCh := make(chan string, 1)
@@ -199,18 +204,21 @@ func RunOpenAIOAuthFlow(label string) (*Credential, error) {
 }
 
 func exchangeCodeForTokens(code, verifier, state, redirectURI, label string) (*Credential, error) {
-	form := url.Values{
-		"grant_type":    {"authorization_code"},
-		"code":          {code},
-		"redirect_uri":  {redirectURI},
-		"client_id":     {claudeClientID},
-		"code_verifier": {verifier},
+	body := map[string]string{
+		"grant_type":    "authorization_code",
+		"code":          code,
+		"redirect_uri":  redirectURI,
+		"client_id":     claudeClientID,
+		"code_verifier": verifier,
+		"state":         state,
 	}
-	req, err := http.NewRequest("POST", claudeOAuthEndpoint, strings.NewReader(form.Encode()))
+	bodyBytes, _ := json.Marshal(body)
+
+	req, err := http.NewRequest("POST", claudeOAuthEndpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := APIClient.Do(req)
 	if err != nil {
@@ -631,7 +639,7 @@ func generateCodeChallenge(verifier string) string {
 }
 
 func generateState() string {
-	b := make([]byte, 16)
+	b := make([]byte, 32)
 	rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
