@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -255,21 +254,19 @@ const (
 )
 
 // RefreshClaudeOAuth refreshes a Claude OAuth token using the discovered endpoint.
-// Claude uses JSON body (not form-encoded) and requires a scope field.
+// Per RFC 6749, OAuth token endpoints expect form-encoded bodies.
 func RefreshClaudeOAuth(refreshToken string) (accessToken, newRefresh string, expiresAt time.Time, err error) {
-	body := map[string]string{
-		"grant_type":    "refresh_token",
-		"refresh_token": refreshToken,
-		"client_id":     claudeClientID,
-		"scope":         claudeDefaultScopes,
+	form := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {claudeClientID},
+		"scope":         {claudeDefaultScopes},
 	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req, err := http.NewRequest("POST", claudeOAuthEndpoint, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequest("POST", claudeOAuthEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("build refresh request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := APIClient.Do(req)
 	if err != nil {

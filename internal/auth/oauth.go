@@ -199,21 +199,18 @@ func RunOpenAIOAuthFlow(label string) (*Credential, error) {
 }
 
 func exchangeCodeForTokens(code, verifier, state, redirectURI, label string) (*Credential, error) {
-	body := map[string]string{
-		"grant_type":    "authorization_code",
-		"code":          code,
-		"redirect_uri":  redirectURI,
-		"client_id":     claudeClientID,
-		"code_verifier": verifier,
-		"state":         state,
+	form := url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {code},
+		"redirect_uri":  {redirectURI},
+		"client_id":     {claudeClientID},
+		"code_verifier": {verifier},
 	}
-	bodyBytes, _ := json.Marshal(body)
-
-	req, err := http.NewRequest("POST", claudeOAuthEndpoint, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequest("POST", claudeOAuthEndpoint, strings.NewReader(form.Encode()))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := APIClient.Do(req)
 	if err != nil {
