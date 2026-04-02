@@ -236,9 +236,21 @@ func exchangeCodeForTokens(code, verifier, state, redirectURI, label string) (*C
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope"`
+		Account      struct {
+			UUID         string `json:"uuid"`
+			EmailAddress string `json:"email_address"`
+		} `json:"account"`
+		Organization struct {
+			UUID string `json:"uuid"`
+		} `json:"organization"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("parse response: %w", err)
+	}
+	if label == "" || label == "Claude Account" {
+		if result.Account.EmailAddress != "" {
+			label = result.Account.EmailAddress
+		}
 	}
 
 	return &Credential{
@@ -248,6 +260,8 @@ func exchangeCodeForTokens(code, verifier, state, redirectURI, label string) (*C
 		Source:       "oauth:launchdock",
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
+		AccountID:    result.Account.UUID,
+		Email:        result.Account.EmailAddress,
 		ExpiresAt:    time.Now().Add(time.Duration(result.ExpiresIn) * time.Second),
 	}, nil
 }
