@@ -246,7 +246,41 @@ func handleAuthPush() {
 		fmt.Fprintf(os.Stderr, "Push failed: %v\n", err)
 		os.Exit(1)
 	}
+	if err := restartRemoteLaunchdock(target); err != nil {
+		fmt.Fprintf(os.Stderr, "Remote restart failed: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Printf("Pushed credential(s) to %s\n", target)
+}
+
+func restartRemoteLaunchdock(target string) error {
+	script := `set -e
+BIN="$HOME/.local/bin/launchdock"
+STATUS="$($BIN ps 2>/dev/null || true)"
+if printf '%s' "$STATUS" | grep -q 'status: running (unmanaged)'; then
+  PORT="${PORT:-8090}"
+  PID=""
+  if command -v ss >/dev/null 2>&1; then
+    PID=$(ss -ltnp 2>/dev/null | awk -v port=":${PORT}" '$4 ~ port { if (match($0, /pid=[0-9]+/)) { print substr($0, RSTART+4, RLENGTH-4); exit } }')
+  fi
+  if [ -z "$PID" ] && command -v lsof >/dev/null 2>&1; then
+    PID=$(lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | head -n 1)
+  fi
+  if [ -z "$PID" ] && command -v netstat >/dev/null 2>&1; then
+    PID=$(netstat -ltnp 2>/dev/null | awk -v port=":${PORT}" '$4 ~ port { split($7, a, "/"); if (a[1] != "-") { print a[1]; exit } }')
+  fi
+  if [ -n "$PID" ] && ps -p "$PID" -o cmd= 2>/dev/null | grep -q '[l]aunchdock'; then
+    kill "$PID"
+    sleep 1
+  fi
+  "$BIN" start >/dev/null
+else
+  "$BIN" restart >/dev/null 2>&1 || "$BIN" start >/dev/null
+fi`
+	cmd := exec.Command("ssh", target, script)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func ensureRemoteLaunchdock(target string) error {
