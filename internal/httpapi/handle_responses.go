@@ -500,27 +500,3 @@ func relayResponsesCollectedNonStream(w http.ResponseWriter, upResp *http.Respon
 	}
 	w.Write(body)
 }
-
-func collectResponsesCompletedJSON(r io.Reader) ([]byte, error) {
-	var finalResponse json.RawMessage
-	err := ReadSSE(r, func(ev SSEEvent) error {
-		var obj struct {
-			Type     string          `json:"type"`
-			Response json.RawMessage `json:"response"`
-		}
-		if json.Unmarshal([]byte(ev.Data), &obj) != nil {
-			return nil
-		}
-		if obj.Type == "response.completed" || obj.Type == "response.done" {
-			finalResponse = append(finalResponse[:0], obj.Response...)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(finalResponse) == 0 {
-		return nil, fmt.Errorf("missing response.completed event")
-	}
-	return finalResponse, nil
-}
