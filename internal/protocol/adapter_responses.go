@@ -271,14 +271,34 @@ func contentToParts(content any, textType string) []map[string]any {
 				text, _ := m["text"].(string)
 				parts = append(parts, map[string]any{"type": textType, "text": text})
 			case "image_url":
-				// Pass through image URLs
-				parts = append(parts, m)
+				if textType != "input_text" {
+					continue
+				}
+				if part := chatImageURLToResponsesImage(m); part != nil {
+					parts = append(parts, part)
+				}
 			}
 		}
 		return parts
 	default:
 		return []map[string]any{}
 	}
+}
+
+func chatImageURLToResponsesImage(part map[string]any) map[string]any {
+	imageURL, ok := part["image_url"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	url, _ := imageURL["url"].(string)
+	if url == "" {
+		return nil
+	}
+	out := map[string]any{"type": "input_image", "image_url": url}
+	if detail, _ := imageURL["detail"].(string); detail != "" {
+		out["detail"] = detail
+	}
+	return out
 }
 
 type ResponsesToolState struct {
