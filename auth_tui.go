@@ -170,7 +170,9 @@ func renderAuthManager(views []CredentialView, cursor int) {
 
 	v := views[cursor]
 	fmt.Printf("\n%sDetails%s\n", ansiBold, ansiReset)
-	detailWidth := width - visibleWidth("  Label:    ")
+	// prefix in printDetailLineStyled is "  %-8s " with label+":"
+	// longest label is "Provider" (8 chars) -> "  Provider: " = 12 chars
+	detailWidth := width - 12
 	if detailWidth < 0 {
 		detailWidth = 0
 	}
@@ -207,7 +209,9 @@ func printDetailLine(label string, value string, width int) {
 
 func printDetailLineStyled(label string, style string, value string, width int) {
 	prefix := fmt.Sprintf("  %-8s ", label+":")
-	available := width - visibleWidth(prefix)
+	// prefix is always plain ASCII; count runes directly without calling visibleWidth
+	// to avoid any ambiguity with the format string itself
+	available := width - len([]rune(prefix))
 	if available < 0 {
 		available = 0
 	}
@@ -262,8 +266,23 @@ func authVisibleRange(total int, cursor int, maxRows int) (start int, end int) {
 	return start, end
 }
 
+// visibleWidth returns the number of terminal columns the string occupies,
+// stripping ANSI escape sequences before counting runes.
 func visibleWidth(s string) int {
-	return len([]rune(s))
+	// Strip ESC [ ... m sequences (CSI sequences used for color/style)
+	out := make([]rune, 0, len([]rune(s)))
+	runes := []rune(s)
+	for i := 0; i < len(runes); i++ {
+		if runes[i] == '\033' && i+1 < len(runes) && runes[i+1] == '[' {
+			i += 2
+			for i < len(runes) && runes[i] != 'm' {
+				i++
+			}
+			continue
+		}
+		out = append(out, runes[i])
+	}
+	return len(out)
 }
 
 func padRight(s string, width int) string {
