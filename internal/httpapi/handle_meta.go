@@ -184,7 +184,7 @@ func anthropicThinkingAliasModels(base []map[string]any) []map[string]any {
 	return aliases
 }
 
-const codexModelsURL = "https://raw.githubusercontent.com/openai/codex/main/codex-rs/core/models.json"
+const codexModelsURL = "https://raw.githubusercontent.com/openai/codex/main/codex-rs/models-manager/models.json"
 
 func openAIModels() []map[string]any {
 	// Try fetching from Codex repo
